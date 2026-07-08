@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
+#include <sstream>
 #include <system_error>
 
 namespace localsend {
@@ -83,11 +84,61 @@ std::vector<std::filesystem::path> selectable_files(const DirectoryListing& list
 }
 
 std::optional<std::filesystem::path> first_selectable_file(const std::filesystem::path& path) {
+  return selectable_file_at(path, 0);
+}
+
+std::optional<std::filesystem::path> selectable_file_at(const std::filesystem::path& path, std::size_t index) {
   const auto files = selectable_files(list_directory(path));
   if (files.empty()) {
     return std::nullopt;
   }
-  return files.front();
+  return files[index % files.size()];
+}
+
+std::string format_file_size(std::uint64_t size) {
+  static constexpr const char* kUnits[] = {"B", "KiB", "MiB", "GiB"};
+  double value = static_cast<double>(size);
+  std::size_t unit = 0;
+  while (value >= 1024.0 && unit + 1 < (sizeof(kUnits) / sizeof(kUnits[0]))) {
+    value /= 1024.0;
+    ++unit;
+  }
+
+  std::ostringstream out;
+  if (unit == 0) {
+    out << size;
+  } else if (value >= 100.0) {
+    out << static_cast<int>(value + 0.5);
+  } else {
+    out.setf(std::ios::fixed);
+    out.precision(1);
+    out << value;
+  }
+  out << ' ' << kUnits[unit];
+  return out.str();
+}
+
+std::string format_file_choice(const std::filesystem::path& path, std::size_t index) {
+  const auto listing = list_directory(path);
+  const auto files = selectable_files(listing);
+  if (files.empty()) {
+    return "No selectable files";
+  }
+
+  const std::size_t selected = index % files.size();
+  std::error_code ec;
+  const auto size = std::filesystem::file_size(files[selected], ec);
+  std::string text = files[selected].filename().string();
+  text += " (";
+  text += std::to_string(selected + 1);
+  text += "/";
+  text += std::to_string(files.size());
+  if (!ec) {
+    text += ", ";
+    text += format_file_size(static_cast<std::uint64_t>(size));
+  }
+  text += ")";
+  return text;
 }
 
 OutboxStatus prepare_outbox(const std::filesystem::path& path, bool create_sample_file) {

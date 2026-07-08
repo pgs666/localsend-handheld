@@ -42,8 +42,10 @@ struct RuntimeState {
   std::string server_status = "Not started";
   std::string discovery_status = "Not started";
   std::string file_browser_status = "Not checked";
+  std::string selected_file_status = "No selectable files";
   std::string send_status = "Select a peer, then press X";
   std::string last_send_error;
+  std::size_t selected_file_index = 0;
   std::optional<std::size_t> selected_device_index;
   std::string selected_peer_status = "No online peer selected";
 };
@@ -51,6 +53,7 @@ struct RuntimeState {
 struct PanelRefs {
   brls::Label* server_status = nullptr;
   brls::Label* discovery_status = nullptr;
+  brls::Label* selected_file = nullptr;
   brls::Label* send_status = nullptr;
   brls::Label* selected_peer = nullptr;
   brls::Label* device_summary = nullptr;
@@ -166,6 +169,7 @@ brls::View* make_panel(const HandheldAppConfig& app_config,
                              "/api/localsend/v2/info"));
   root->addView(make_row("Discovery", state.discovery_status, &refs.discovery_status));
   root->addView(make_row("File browser", state.file_browser_status));
+  root->addView(make_row("Selected file", state.selected_file_status, &refs.selected_file));
   root->addView(make_row("Send action", state.send_status, &refs.send_status));
 
   root->addView(make_section("Peers"));
@@ -228,6 +232,13 @@ void refresh_discovery_status(const std::string& text, const PanelRefs& refs) {
 void refresh_send_status(const std::string& text, const PanelRefs& refs) {
   if (refs.send_status) {
     refs.send_status->setText(text);
+  }
+}
+
+void refresh_selected_file_status(const std::filesystem::path& outbox_path, RuntimeState& state, const PanelRefs& refs) {
+  state.selected_file_status = format_file_choice(outbox_path, state.selected_file_index);
+  if (refs.selected_file) {
+    refs.selected_file->setText(state.selected_file_status);
   }
 }
 
@@ -342,7 +353,9 @@ int run_handheld_app(const HandheldAppConfig& config) {
   log_line("Manual peers configured: " + std::to_string(service_config.manual_devices.size()));
   const OutboxStatus outbox_status = prepare_outbox(service_config.outbox_path, true);
   state.file_browser_status = format_outbox_status(outbox_status);
+  state.selected_file_status = format_file_choice(service_config.outbox_path, state.selected_file_index);
   log_line("Outbox status: " + state.file_browser_status);
+  log_line("Selected file: " + state.selected_file_status);
 
   std::unique_ptr<AppService> service;
   const bool start_service_before_ui = config.platform != PlatformKind::Switch;
@@ -384,7 +397,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
       return true;
     }
 
-    const std::optional<std::filesystem::path> file = first_selectable_file(service_config.outbox_path);
+    const std::optional<std::filesystem::path> file = selectable_file_at(service_config.outbox_path, state.selected_file_index);
     if (!file) {
       state.send_status = "Outbox empty";
       refresh_send_status(state.send_status, refs);
@@ -420,6 +433,12 @@ int run_handheld_app(const HandheldAppConfig& config) {
       refs.selected_peer->setText(state.selected_peer_status);
     }
     log_line("Selected peer: " + state.selected_peer_status);
+    return true;
+  });
+  frame->registerAction("Next file", brls::BUTTON_RB, [&](brls::View*) {
+    ++state.selected_file_index;
+    refresh_selected_file_status(service_config.outbox_path, state, refs);
+    log_line("Selected file: " + state.selected_file_status);
     return true;
   });
   log_line("Using AppletFrame bottom-bar shell");

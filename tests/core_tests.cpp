@@ -950,6 +950,15 @@ void test_file_browser_listing() {
   const auto first = localsend::first_selectable_file(dir);
   require(first.has_value(), "file browser first selectable missing");
   require(first->filename() == "beta.txt", "file browser first selectable failed");
+  const auto second = localsend::selectable_file_at(dir, 1);
+  require(second.has_value(), "file browser indexed selectable missing");
+  require(second->filename() == "中文.txt", "file browser indexed selectable failed");
+  const auto wrapped = localsend::selectable_file_at(dir, 2);
+  require(wrapped.has_value(), "file browser wrapped selectable missing");
+  require(wrapped->filename() == "beta.txt", "file browser wrapped selectable failed");
+  require(localsend::format_file_size(1536) == "1.5 KiB", "file browser size format failed");
+  const auto choice = localsend::format_file_choice(dir, 1);
+  require(choice.find("中文.txt (2/2, 4 B)") != std::string::npos, "file browser choice format failed");
 
   std::filesystem::remove_all(dir);
 }

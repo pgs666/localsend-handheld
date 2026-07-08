@@ -34,6 +34,9 @@ struct OutboxStatus {
 DirectoryListing list_directory(const std::filesystem::path& path);
 std::vector<std::filesystem::path> selectable_files(const DirectoryListing& listing);
 std::optional<std::filesystem::path> first_selectable_file(const std::filesystem::path& path);
+std::optional<std::filesystem::path> selectable_file_at(const std::filesystem::path& path, std::size_t index);
+std::string format_file_size(std::uint64_t size);
+std::string format_file_choice(const std::filesystem::path& path, std::size_t index);
 OutboxStatus prepare_outbox(const std::filesystem::path& path, bool create_sample_file = true);
 
 } // namespace localsend

@@ -80,7 +80,6 @@ build_switch_host() {
 build_switch_container() {
   container_run "${SWITCH_IMAGE}" "
     set -euo pipefail
-    dkp-pacman -Syu --noconfirm --needed switch-glm
     curl -L -o /tmp/libuam.pkg.tar.zst \
       https://github.com/xfangfang/wiliwili/releases/download/v0.1.0/libuam-f8c9eef01ffe06334d530393d636d69e2b52744b-1-any.pkg.tar.zst
     dkp-pacman -U --noconfirm /tmp/libuam.pkg.tar.zst

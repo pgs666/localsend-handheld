@@ -43,6 +43,7 @@ add_subdirectory(${BOREALIS_LIBRARY}
   ${CMAKE_CURRENT_BINARY_DIR}/borealis)
 
 target_include_directories(borealis BEFORE PUBLIC
+  ${PROJECT_ROOT}/third_party/glm_minimal
   ${BOREALIS_LIBRARY}/include/borealis/extern/tinyxml2
 )
 

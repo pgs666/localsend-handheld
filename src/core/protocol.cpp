@@ -99,6 +99,7 @@ Json to_json(const InfoRegisterDto& dto) {
 Json to_json(const MulticastDto& dto) {
   Json json = to_json(static_cast<const InfoRegisterDto&>(dto));
   json["announce"] = dto.announce;
+  json["announcement"] = dto.announce;
   return json;
 }
 
@@ -217,4 +218,3 @@ std::string mime_from_filename(const std::string& filename) {
 }
 
 } // namespace localsend
-

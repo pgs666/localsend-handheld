@@ -97,6 +97,9 @@ void test_multicast_dto() {
   dto.announce = true;
 
   const auto payload = localsend::make_multicast_announcement(dto);
+  const auto json = localsend::Json::parse(payload);
+  require(json.at("announce").as_bool(), "multicast announce field missing");
+  require(json.at("announcement").as_bool(), "multicast announcement compat field missing");
   const auto device = localsend::device_from_multicast(payload, "192.168.1.50", 53317);
   require(device.ip == "192.168.1.50", "multicast ip failed");
   require(device.alias == "Switch", "multicast alias failed");
@@ -470,6 +473,7 @@ void test_route_constants() {
   require(std::string(localsend::kRouteInfoV1) == "/api/localsend/v1/info", "v1 info route mismatch");
   require(std::string(localsend::kRoutePrepareUploadV1) == "/api/localsend/v1/send-request", "v1 prepare route mismatch");
   require(std::string(localsend::kDefaultMulticastGroup) == "224.0.0.167", "multicast group mismatch");
+  require(std::string(localsend::kDefaultBroadcastAddress) == "255.255.255.255", "broadcast address mismatch");
 }
 
 void test_default_config_paths() {

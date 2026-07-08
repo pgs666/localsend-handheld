@@ -42,7 +42,30 @@ int create_udp_socket() {
 
   int enabled = 1;
   ::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+  ::setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &enabled, sizeof(enabled));
+
+  unsigned char ttl = 1;
+  unsigned char loop = 1;
+  ::setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+  ::setsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
   return fd;
+}
+
+bool send_udp_packet(int fd, const std::string& address, int port, const std::string& payload) {
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(static_cast<uint16_t>(port));
+  if (::inet_pton(AF_INET, address.c_str(), &addr.sin_addr) != 1) {
+    return false;
+  }
+
+  const ssize_t sent = ::sendto(fd,
+                                payload.data(),
+                                payload.size(),
+                                0,
+                                reinterpret_cast<sockaddr*>(&addr),
+                                sizeof(addr));
+  return sent == static_cast<ssize_t>(payload.size());
 }
 
 } // namespace
@@ -61,23 +84,11 @@ bool announce_multicast(const MulticastDto& self, const std::string& group, int 
     return false;
   }
 
-  sockaddr_in addr{};
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(static_cast<uint16_t>(port));
-  if (::inet_pton(AF_INET, group.c_str(), &addr.sin_addr) != 1) {
-    close_fd(fd);
-    return false;
-  }
-
   const std::string payload = make_multicast_announcement(self);
-  const ssize_t sent = ::sendto(fd,
-                                payload.data(),
-                                payload.size(),
-                                0,
-                                reinterpret_cast<sockaddr*>(&addr),
-                                sizeof(addr));
+  const bool sent_multicast = send_udp_packet(fd, group, port, payload);
+  const bool sent_broadcast = send_udp_packet(fd, kDefaultBroadcastAddress, port, payload);
   close_fd(fd);
-  return sent == static_cast<ssize_t>(payload.size());
+  return sent_multicast || sent_broadcast;
 }
 
 std::vector<Device> discover_peers(std::chrono::milliseconds timeout, const std::string& group, int port) {
@@ -152,4 +163,3 @@ std::vector<Device> discover_peers(std::chrono::milliseconds timeout, const std:
 }
 
 } // namespace localsend
-

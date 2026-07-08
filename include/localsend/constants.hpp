@@ -4,6 +4,7 @@ namespace localsend {
 
 inline constexpr const char* kProtocolVersion = "2.1";
 inline constexpr const char* kDefaultMulticastGroup = "224.0.0.167";
+inline constexpr const char* kDefaultBroadcastAddress = "255.255.255.255";
 inline constexpr int kDefaultPort = 53317;
 inline constexpr int kTransferBufferSize = 64 * 1024;
 

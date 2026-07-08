@@ -233,9 +233,18 @@ void test_device_store_offline_remove_and_clear() {
   entry = store.get(key);
   require(entry->online, "device refresh should mark online");
 
+  localsend::Device manual;
+  manual.ip = "10.0.0.3";
+  manual.port = 53317;
+  manual.alias = "Manual";
+  const std::string manual_key = store.upsert_manual(manual);
+
   require(store.mark_stale_offline(std::chrono::seconds(-1)) == 1, "stale device count failed");
   entry = store.get(key);
   require(!entry->online, "stale device should be offline");
+  const auto manual_entry = store.get(manual_key);
+  require(manual_entry.has_value(), "manual stale device missing");
+  require(manual_entry->online, "manual device should not be marked stale");
 
   require(store.remove(key), "device remove failed");
   require(!store.get(key).has_value(), "removed device should be missing");

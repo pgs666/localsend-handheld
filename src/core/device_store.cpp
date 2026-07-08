@@ -49,7 +49,7 @@ int DeviceStore::mark_stale_offline(std::chrono::seconds max_age) {
 
   std::lock_guard<std::mutex> lock(mutex_);
   for (auto& entry : devices_) {
-    if (entry.online && now - entry.last_seen > max_age) {
+    if (entry.source == DeviceSource::Discovered && entry.online && now - entry.last_seen > max_age) {
       entry.online = false;
       ++changed;
     }

@@ -15,6 +15,8 @@
 namespace localsend {
 namespace {
 
+constexpr auto kDiscoveryStaleAge = std::chrono::seconds(30);
+
 std::string default_device_model(PlatformKind platform) {
   switch (platform) {
   case PlatformKind::Switch:
@@ -177,6 +179,7 @@ int AppService::refresh_discovery(std::chrono::milliseconds timeout) {
     devices_.upsert_discovered(std::move(device));
     ++added_or_updated;
   }
+  devices_.mark_stale_offline(kDiscoveryStaleAge);
   return added_or_updated;
 }
 

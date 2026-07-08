@@ -18,6 +18,16 @@ int progress_percent(const TransferItem& item) {
   return static_cast<int>((clamped * 100) / item.size);
 }
 
+std::string peer_label(const TransferItem& item) {
+  if (!item.peer_alias.empty()) {
+    return item.peer_alias;
+  }
+  if (!item.peer_ip.empty()) {
+    return item.peer_ip;
+  }
+  return "Unknown peer";
+}
+
 } // namespace
 
 std::string format_device_summary(const std::vector<DeviceEntry>& devices, std::size_t max_items) {
@@ -58,8 +68,9 @@ std::string format_transfer_summary(const std::vector<TransferItem>& transfers, 
       out << '\n';
     }
     out << to_string(item.direction) << ' ';
-    out << item.file_name << " -> ";
-    out << (item.peer_alias.empty() ? item.peer_ip : item.peer_alias);
+    out << item.file_name;
+    out << (item.direction == TransferDirection::Receive ? " <- " : " -> ");
+    out << peer_label(item);
     out << " [" << to_string(item.status) << ", " << progress_percent(item) << "%]";
     if (!item.error.empty()) {
       out << ' ' << item.error;

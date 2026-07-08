@@ -293,7 +293,7 @@ void test_status_format_summaries() {
   old_item.file_name = "old.bin";
   old_item.size = 4;
   old_item.bytes_transferred = 4;
-  old_item.peer_alias = "Phone";
+  old_item.peer_ip = "192.168.1.20";
   transfers.push_back(old_item);
 
   localsend::TransferItem item;
@@ -309,6 +309,9 @@ void test_status_format_summaries() {
   require(transfer_summary.find("send demo.bin -> MateBook [transferring, 40%]") != std::string::npos,
           "transfer summary failed");
   require(transfer_summary.find("+1 older") != std::string::npos, "transfer summary overflow failed");
+  const std::string receive_summary = localsend::format_transfer_summary(transfers, 2);
+  require(receive_summary.find("receive old.bin <- 192.168.1.20 [completed, 100%]") != std::string::npos,
+          "receive transfer summary failed");
   require(localsend::format_transfer_summary({}) == "No transfers yet", "empty transfer summary failed");
 }
 

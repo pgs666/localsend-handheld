@@ -762,6 +762,7 @@ void handle_client(int fd) {
   const std::string target = first_target(request);
   const size_t length = content_length(request);
   const bool chunked = transfer_encoding_chunked(request);
+  append_log("request target=" + target + " length=" + std::to_string(length) + " chunked=" + std::to_string(chunked));
 
   if (first_method_is(request, "GET") && starts_with(target, "/api/localsend/v2/info")) {
     handle_info(fd);

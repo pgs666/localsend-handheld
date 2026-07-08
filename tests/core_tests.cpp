@@ -128,6 +128,41 @@ VCUMCMmX5tNBCQ8q4QG99msObKjrj3o=
           "certificate fingerprint failed");
 }
 
+void test_tls_identity_persistence() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-identity-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const auto certificate_path = dir / "cert.pem";
+  const auto private_key_path = dir / "key.pem";
+
+  const auto created = localsend::load_or_create_tls_identity(certificate_path, private_key_path);
+  require(std::filesystem::exists(certificate_path), "generated certificate missing");
+  require(std::filesystem::exists(private_key_path), "generated private key missing");
+  require(created.certificate_pem.find("BEGIN CERTIFICATE") != std::string::npos, "generated certificate PEM invalid");
+  require(created.private_key_pem.find("BEGIN") != std::string::npos, "generated private key PEM invalid");
+  require(created.fingerprint.size() == 64, "generated fingerprint length failed");
+  require(created.fingerprint == localsend::certificate_fingerprint_from_pem(created.certificate_pem), "generated fingerprint mismatch");
+
+  const auto loaded = localsend::load_or_create_tls_identity(certificate_path, private_key_path);
+  require(loaded.certificate_pem == created.certificate_pem, "TLS identity certificate should be reused");
+  require(loaded.private_key_pem == created.private_key_pem, "TLS identity private key should be reused");
+  require(loaded.fingerprint == created.fingerprint, "TLS identity fingerprint should be stable");
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Generated TLS Receiver";
+  self.protocol = localsend::ProtocolType::Https;
+  self.fingerprint = created.fingerprint;
+
+  const auto inbox = dir / "inbox";
+  localsend::LocalSendServer server(self, inbox, {created.certificate_pem, created.private_key_pem});
+  require(server.start(0), "generated TLS identity server failed to start");
+  const auto info = localsend::https_get("127.0.0.1", server.port(), localsend::kRouteInfo, created.fingerprint);
+  require(info.status == 200, "generated TLS identity info failed");
+  server.stop();
+
+  std::filesystem::remove_all(dir);
+}
+
 void test_mbedtls_linked() {
 #if LOCALSEND_HAS_MBEDTLS
   require(mbedtls_version_get_number() >= 0x03060700, "mbedTLS version is older than pinned release");
@@ -300,10 +335,14 @@ void test_default_config_paths() {
   const auto switch_config = localsend::default_config(localsend::PlatformKind::Switch);
   require(switch_config.inbox_path.string() == "sdmc:/switch/localsend/inbox/", "switch inbox path mismatch");
   require(switch_config.config_path.string() == "sdmc:/switch/localsend/config.json", "switch config path mismatch");
+  require(switch_config.certificate_path.string() == "sdmc:/switch/localsend/cert.pem", "switch certificate path mismatch");
+  require(switch_config.private_key_path.string() == "sdmc:/switch/localsend/key.pem", "switch private key path mismatch");
 
   const auto psv_config = localsend::default_config(localsend::PlatformKind::Psv);
   require(psv_config.inbox_path.string() == "ux0:data/localsend/inbox/", "psv inbox path mismatch");
   require(psv_config.config_path.string() == "ux0:data/localsend/config.json", "psv config path mismatch");
+  require(psv_config.certificate_path.string() == "ux0:data/localsend/cert.pem", "psv certificate path mismatch");
+  require(psv_config.private_key_path.string() == "ux0:data/localsend/key.pem", "psv private key path mismatch");
 }
 
 void test_config_round_trip() {
@@ -315,6 +354,8 @@ void test_config_round_trip() {
   auto config = localsend::default_config(localsend::PlatformKind::Desktop);
   config.alias = "Desk";
   config.inbox_path = "downloads";
+  config.certificate_path = "tls/cert.pem";
+  config.private_key_path = "tls/key.pem";
   config.port = 12345;
   config.discovery_enabled = false;
   config.auto_accept = true;
@@ -323,6 +364,8 @@ void test_config_round_trip() {
   const auto loaded = localsend::load_config(localsend::PlatformKind::Desktop, path);
   require(loaded.alias == "Desk", "config alias round trip failed");
   require(loaded.inbox_path.string() == "downloads", "config inbox round trip failed");
+  require(loaded.certificate_path.string() == "tls/cert.pem", "config certificate round trip failed");
+  require(loaded.private_key_path.string() == "tls/key.pem", "config private key round trip failed");
   require(loaded.port == 12345, "config port round trip failed");
   require(!loaded.discovery_enabled, "config discovery round trip failed");
   require(loaded.auto_accept, "config auto accept round trip failed");
@@ -828,6 +871,7 @@ int main() {
     test_prepare_upload_response_dto();
     test_multicast_dto();
     test_security_fingerprint();
+    test_tls_identity_persistence();
     test_mbedtls_linked();
     test_tls_loopback();
     test_route_constants();

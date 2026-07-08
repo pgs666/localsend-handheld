@@ -44,6 +44,30 @@ std::filesystem::path default_config_path(PlatformKind platform) {
   return "local_config.json";
 }
 
+std::filesystem::path default_certificate_path(PlatformKind platform) {
+  switch (platform) {
+  case PlatformKind::Switch:
+    return "sdmc:/switch/localsend/cert.pem";
+  case PlatformKind::Psv:
+    return "ux0:data/localsend/cert.pem";
+  case PlatformKind::Desktop:
+    return "cert.pem";
+  }
+  return "cert.pem";
+}
+
+std::filesystem::path default_private_key_path(PlatformKind platform) {
+  switch (platform) {
+  case PlatformKind::Switch:
+    return "sdmc:/switch/localsend/key.pem";
+  case PlatformKind::Psv:
+    return "ux0:data/localsend/key.pem";
+  case PlatformKind::Desktop:
+    return "key.pem";
+  }
+  return "key.pem";
+}
+
 std::string optional_string(const Json& json, const std::string& key, const std::string& fallback) {
   if (!json.contains(key) || json.at(key).is_null()) {
     return fallback;
@@ -69,6 +93,8 @@ Json to_json(const AppConfig& config) {
   Json json = Json::object();
   json["alias"] = config.alias;
   json["inboxPath"] = config.inbox_path.string();
+  json["certificatePath"] = config.certificate_path.string();
+  json["privateKeyPath"] = config.private_key_path.string();
   json["port"] = static_cast<std::int64_t>(config.port);
   json["discoveryEnabled"] = config.discovery_enabled;
   json["autoAccept"] = config.auto_accept;
@@ -82,6 +108,8 @@ AppConfig default_config(PlatformKind platform) {
   config.alias = platform_alias(platform);
   config.inbox_path = default_inbox_path(platform);
   config.config_path = default_config_path(platform);
+  config.certificate_path = default_certificate_path(platform);
+  config.private_key_path = default_private_key_path(platform);
   config.port = kDefaultPort;
   config.discovery_enabled = true;
   config.auto_accept = false;
@@ -101,6 +129,8 @@ AppConfig load_config(PlatformKind platform, const std::filesystem::path& path) 
   const Json json = Json::parse(text);
   config.alias = optional_string(json, "alias", config.alias);
   config.inbox_path = optional_string(json, "inboxPath", config.inbox_path.string());
+  config.certificate_path = optional_string(json, "certificatePath", config.certificate_path.string());
+  config.private_key_path = optional_string(json, "privateKeyPath", config.private_key_path.string());
   config.port = optional_int(json, "port", config.port);
   config.discovery_enabled = optional_bool(json, "discoveryEnabled", config.discovery_enabled);
   config.auto_accept = optional_bool(json, "autoAccept", config.auto_accept);
@@ -116,4 +146,3 @@ void save_config(const AppConfig& config, const std::filesystem::path& path) {
 }
 
 } // namespace localsend
-

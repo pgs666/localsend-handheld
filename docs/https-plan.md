@@ -19,10 +19,12 @@ Implementation sequence:
 2. Add dependency-free certificate fingerprint parsing in core. Done.
 3. Vendor mbedTLS at a pinned version and build it for desktop, Switch, and PSV. Done for CI checkout and desktop core linkage.
 4. Add a reusable TLS stream wrapper around existing TCP sockets. Done for desktop loopback tests.
-5. Generate or load `cert.pem` and `key.pem` per platform.
-6. Wrap the existing HTTP server/client stream operations with mbedTLS.
-7. Advertise `protocol: "https"` and the certificate fingerprint.
-8. Verify peer fingerprints when discovery/register/info provided one.
+5. Generate or load `cert.pem` and `key.pem` per platform. Done in portable core.
+6. Wrap the existing HTTP server/client stream operations with mbedTLS. Done for desktop core.
+7. Advertise `protocol: "https"` and the certificate fingerprint. Done for desktop core.
+8. Verify peer fingerprints when discovery/register/info provided one. Done for desktop core.
+9. Link mbedTLS into Switch and PSV package builds.
+10. Add UI/config controls to enable HTTPS on handheld targets.
 
 Expected platform paths:
 

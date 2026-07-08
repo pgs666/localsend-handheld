@@ -1,9 +1,18 @@
 #include "localsend/security.hpp"
 
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/pk.h>
+#include <mbedtls/rsa.h>
+#include <mbedtls/x509_crt.h>
+
 #include <array>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
+#include <vector>
 
 namespace localsend {
 namespace {
@@ -93,6 +102,162 @@ std::string pem_body(const std::string& pem) {
     throw std::runtime_error("missing certificate PEM markers");
   }
   return pem.substr(begin_pos + begin.size(), end_pos - (begin_pos + begin.size()));
+}
+
+std::string read_text_file(const std::filesystem::path& path) {
+  std::ifstream in(path, std::ios::binary);
+  if (!in) {
+    throw std::runtime_error("failed to open " + path.string());
+  }
+  return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+
+void write_text_file(const std::filesystem::path& path, const std::string& text) {
+  if (path.has_parent_path()) {
+    std::filesystem::create_directories(path.parent_path());
+  }
+  std::ofstream out(path, std::ios::binary);
+  if (!out) {
+    throw std::runtime_error("failed to write " + path.string());
+  }
+  out.write(text.data(), static_cast<std::streamsize>(text.size()));
+}
+
+TlsIdentity identity_from_pem(std::string certificate_pem, std::string private_key_pem) {
+  TlsIdentity identity;
+  identity.certificate_pem = std::move(certificate_pem);
+  identity.private_key_pem = std::move(private_key_pem);
+  identity.fingerprint = certificate_fingerprint_from_pem(identity.certificate_pem);
+  return identity;
+}
+
+std::string mbedtls_error_text(const char* operation, int result) {
+  return std::string(operation) + " failed: " + std::to_string(result);
+}
+
+TlsIdentity generate_tls_identity() {
+  mbedtls_entropy_context entropy;
+  mbedtls_ctr_drbg_context ctr_drbg;
+  mbedtls_pk_context key;
+  mbedtls_x509write_cert certificate;
+
+  mbedtls_entropy_init(&entropy);
+  mbedtls_ctr_drbg_init(&ctr_drbg);
+  mbedtls_pk_init(&key);
+  mbedtls_x509write_crt_init(&certificate);
+
+  auto cleanup = [&]() {
+    mbedtls_x509write_crt_free(&certificate);
+    mbedtls_pk_free(&key);
+    mbedtls_ctr_drbg_free(&ctr_drbg);
+    mbedtls_entropy_free(&entropy);
+  };
+
+  const char* personalization = "localsend-handheld-cert";
+  int result = mbedtls_ctr_drbg_seed(&ctr_drbg,
+                                     mbedtls_entropy_func,
+                                     &entropy,
+                                     reinterpret_cast<const unsigned char*>(personalization),
+                                     std::strlen(personalization));
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("RNG seed", result));
+  }
+
+  result = mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("key setup", result));
+  }
+
+  result = mbedtls_rsa_gen_key(mbedtls_pk_rsa(key),
+                               mbedtls_ctr_drbg_random,
+                               &ctr_drbg,
+                               2048,
+                               65537);
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("RSA key generation", result));
+  }
+
+  unsigned char serial[16] = {};
+  result = mbedtls_ctr_drbg_random(&ctr_drbg, serial, sizeof(serial));
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("certificate serial generation", result));
+  }
+  serial[0] &= 0x7f;
+  if (serial[0] == 0) {
+    serial[0] = 1;
+  }
+
+  mbedtls_x509write_crt_set_version(&certificate, MBEDTLS_X509_CRT_VERSION_3);
+  mbedtls_x509write_crt_set_md_alg(&certificate, MBEDTLS_MD_SHA256);
+  mbedtls_x509write_crt_set_subject_key(&certificate, &key);
+  mbedtls_x509write_crt_set_issuer_key(&certificate, &key);
+
+  result = mbedtls_x509write_crt_set_serial_raw(&certificate, serial, sizeof(serial));
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("certificate serial", result));
+  }
+
+  constexpr const char* kLocalSendUserName = "CN=LocalSend User";
+  result = mbedtls_x509write_crt_set_subject_name(&certificate, kLocalSendUserName);
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("certificate subject", result));
+  }
+  result = mbedtls_x509write_crt_set_issuer_name(&certificate, kLocalSendUserName);
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("certificate issuer", result));
+  }
+
+  result = mbedtls_x509write_crt_set_validity(&certificate, "20200101000000", "20400101000000");
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("certificate validity", result));
+  }
+
+  result = mbedtls_x509write_crt_set_basic_constraints(&certificate, 0, -1);
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("certificate constraints", result));
+  }
+  result = mbedtls_x509write_crt_set_subject_key_identifier(&certificate);
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("certificate subject key identifier", result));
+  }
+  result = mbedtls_x509write_crt_set_authority_key_identifier(&certificate);
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("certificate authority key identifier", result));
+  }
+
+  std::vector<unsigned char> certificate_buffer(4096);
+  result = mbedtls_x509write_crt_pem(&certificate,
+                                     certificate_buffer.data(),
+                                     certificate_buffer.size(),
+                                     mbedtls_ctr_drbg_random,
+                                     &ctr_drbg);
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("certificate PEM write", result));
+  }
+
+  std::vector<unsigned char> key_buffer(4096);
+  result = mbedtls_pk_write_key_pem(&key, key_buffer.data(), key_buffer.size());
+  if (result != 0) {
+    cleanup();
+    throw std::runtime_error(mbedtls_error_text("private key PEM write", result));
+  }
+
+  TlsIdentity identity = identity_from_pem(reinterpret_cast<const char*>(certificate_buffer.data()),
+                                          reinterpret_cast<const char*>(key_buffer.data()));
+  cleanup();
+  return identity;
 }
 
 } // namespace
@@ -186,6 +351,17 @@ std::string sha256_hex(const std::vector<std::uint8_t>& data) {
 
 std::string certificate_fingerprint_from_pem(const std::string& pem) {
   return sha256_hex(certificate_der_from_pem(pem));
+}
+
+TlsIdentity load_or_create_tls_identity(const std::filesystem::path& certificate_path, const std::filesystem::path& private_key_path) {
+  if (std::filesystem::exists(certificate_path) && std::filesystem::exists(private_key_path)) {
+    return identity_from_pem(read_text_file(certificate_path), read_text_file(private_key_path));
+  }
+
+  TlsIdentity identity = generate_tls_identity();
+  write_text_file(certificate_path, identity.certificate_pem);
+  write_text_file(private_key_path, identity.private_key_pem);
+  return identity;
 }
 
 } // namespace localsend

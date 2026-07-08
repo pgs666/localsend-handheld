@@ -616,6 +616,27 @@ ClientHttpResult http_post_json(const std::string& ip, int port, const char* pat
   return result;
 }
 
+ClientHttpResult http_get(const std::string& ip, int port, const char* path) {
+  ClientHttpResult result;
+  const int fd = connect_tcp(ip, port);
+  if (fd < 0) {
+    return result;
+  }
+
+  char header[512];
+  std::snprintf(header,
+                sizeof(header),
+                "GET %s HTTP/1.1\r\nHost: %s:%d\r\nConnection: close\r\n\r\n",
+                path,
+                ip.c_str(),
+                port);
+  if (send_all(fd, header, std::strlen(header))) {
+    result = read_client_response(fd);
+  }
+  close(fd);
+  return result;
+}
+
 ClientHttpResult http_post_file(const std::string& ip, int port, const std::string& path, const std::string& file_path, size_t size) {
   ClientHttpResult result;
   FILE* in = std::fopen(file_path.c_str(), "rb");
@@ -838,6 +859,25 @@ bool extract_prepare_response(const std::string& body, std::string& session_id, 
   return parse_json_string_at(body, pos, token) != std::string::npos && !session_id.empty() && !token.empty();
 }
 
+bool extract_legacy_prepare_response(const std::string& body, std::string& token) {
+  size_t pos = skip_ws(body, 0);
+  if (pos >= body.size() || body[pos] != '{') {
+    return false;
+  }
+  pos = skip_ws(body, pos + 1);
+  std::string key;
+  const size_t after_key = parse_json_string_at(body, pos, key);
+  if (after_key == std::string::npos) {
+    return false;
+  }
+  const size_t colon = body.find(':', after_key);
+  if (colon == std::string::npos) {
+    return false;
+  }
+  pos = skip_ws(body, colon + 1);
+  return parse_json_string_at(body, pos, token) != std::string::npos && !token.empty();
+}
+
 void send_outbox_file() {
   // TODO: Replace this manual outbox sender with the real borealis send flow.
   std::string ip;
@@ -866,9 +906,24 @@ void send_outbox_file() {
       "\"files\":{\"0\":{\"id\":\"0\",\"fileName\":\"" + json_escape(file_name) +
       "\",\"size\":" + std::to_string(file_size) + ",\"fileType\":\"application/octet-stream\"}}}";
 
+  bool use_v2 = true;
+  ClientHttpResult info = http_get(ip, port, "/api/localsend/v2/info");
+  if (info.status != 200) {
+    append_log("send v2 info failed status=" + std::to_string(info.status) + " body=" + info.body.substr(0, 256));
+    info = http_get(ip, port, "/api/localsend/v1/info");
+    use_v2 = false;
+  }
+  if (info.status != 200) {
+    std::snprintf(g_status, sizeof(g_status), "Send info failed: %d", info.status);
+    append_log("send info failed status=" + std::to_string(info.status) + " body=" + info.body.substr(0, 256));
+    return;
+  }
+  const std::string target_version = find_json_string(info.body, "version", use_v2 ? "2.1" : "1.0");
+  append_log("send target info version=" + target_version + " v2=" + std::to_string(use_v2));
+
   std::snprintf(g_status, sizeof(g_status), "Preparing send: %s", file_name.c_str());
   append_log("send prepare target=" + ip + ":" + std::to_string(port) + " file=" + file_path + " size=" + std::to_string(file_size));
-  const ClientHttpResult prepared = http_post_json(ip, port, "/api/localsend/v2/prepare-upload", prepare);
+  const ClientHttpResult prepared = http_post_json(ip, port, use_v2 ? "/api/localsend/v2/prepare-upload" : "/api/localsend/v1/send-request", prepare);
   if (prepared.status != 200) {
     std::snprintf(g_status, sizeof(g_status), "Send prepare failed: %d", prepared.status);
     append_log("send prepare failed status=" + std::to_string(prepared.status) + " body=" + prepared.body.substr(0, 512));
@@ -877,13 +932,16 @@ void send_outbox_file() {
 
   std::string session_id;
   std::string token;
-  if (!extract_prepare_response(prepared.body, session_id, token)) {
+  const bool parsed = use_v2 ? extract_prepare_response(prepared.body, session_id, token) : extract_legacy_prepare_response(prepared.body, token);
+  if (!parsed) {
     std::snprintf(g_status, sizeof(g_status), "Send failed: bad prepare response");
     append_log("send bad prepare response=" + prepared.body.substr(0, 512));
     return;
   }
 
-  const std::string upload_path = "/api/localsend/v2/upload?sessionId=" + session_id + "&fileId=0&token=" + token;
+  const std::string upload_path = use_v2
+                                      ? "/api/localsend/v2/upload?sessionId=" + session_id + "&fileId=0&token=" + token
+                                      : "/api/localsend/v1/send?fileId=0&token=" + token;
   std::snprintf(g_status, sizeof(g_status), "Sending: %s", file_name.c_str());
   const ClientHttpResult uploaded = http_post_file(ip, port, upload_path, file_path, file_size);
   if (uploaded.status != 200) {

@@ -210,6 +210,9 @@ void test_device_store_upsert_and_sources() {
   require(manual_key == "endpoint:192.168.1.70:53317", "manual endpoint key failed");
   require(store.snapshot().size() == 2, "manual device insert failed");
   require(store.get(manual_key)->source == localsend::DeviceSource::Manual, "manual source failed");
+  auto sorted_snapshot = store.snapshot();
+  require(sorted_snapshot[0].source == localsend::DeviceSource::Manual, "manual devices should sort before discovered devices");
+  require(sorted_snapshot[0].key == manual_key, "manual snapshot ordering key failed");
 
   require(std::string(localsend::to_string(localsend::DeviceSource::Discovered)) == "discovered", "discovered source string failed");
   require(std::string(localsend::to_string(localsend::DeviceSource::Manual)) == "manual", "manual source string failed");
@@ -228,6 +231,17 @@ void test_device_store_offline_remove_and_clear() {
   auto entry = store.get(key);
   require(entry.has_value(), "offline device missing");
   require(!entry->online, "device should be offline");
+
+  localsend::Device online_device;
+  online_device.ip = "10.0.0.4";
+  online_device.port = 53317;
+  online_device.alias = "Desktop Online";
+  const std::string online_key = store.upsert_discovered(online_device);
+  auto snapshot = store.snapshot();
+  require(snapshot.size() == 2, "offline ordering snapshot size failed");
+  require(snapshot[0].key == online_key, "online discovered devices should sort before offline discovered devices");
+  require(snapshot[1].key == key, "offline discovered device should sort after online discovered devices");
+  require(store.remove(online_key), "online ordering device remove failed");
 
   require(store.upsert_discovered(device) == key, "device re-upsert key failed");
   entry = store.get(key);

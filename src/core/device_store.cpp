@@ -68,7 +68,17 @@ std::optional<DeviceEntry> DeviceStore::get(const std::string& key) const {
 
 std::vector<DeviceEntry> DeviceStore::snapshot() const {
   std::lock_guard<std::mutex> lock(mutex_);
-  return devices_;
+  std::vector<DeviceEntry> snapshot = devices_;
+  std::stable_sort(snapshot.begin(), snapshot.end(), [](const DeviceEntry& lhs, const DeviceEntry& rhs) {
+    if (lhs.source != rhs.source) {
+      return lhs.source == DeviceSource::Manual;
+    }
+    if (lhs.online != rhs.online) {
+      return lhs.online;
+    }
+    return false;
+  });
+  return snapshot;
 }
 
 void DeviceStore::clear() {

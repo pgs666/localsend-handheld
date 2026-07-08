@@ -289,7 +289,7 @@ void refresh_service_snapshot(AppService& service, RuntimeState& state, const Pa
     refs.selected_peer->setText(state.selected_peer_status);
   }
   if (refs.device_summary) {
-    refs.device_summary->setText(format_device_summary(snapshot.devices));
+    refs.device_summary->setText(format_device_summary(snapshot.devices, 5));
   }
   if (refs.transfer_summary) {
     refs.transfer_summary->setText(format_transfer_summary(snapshot.transfers));

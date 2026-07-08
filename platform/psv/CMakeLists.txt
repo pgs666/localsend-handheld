@@ -110,7 +110,7 @@ target_compile_options(localsend-handheld-psv PRIVATE
 target_link_libraries(localsend-handheld-psv PRIVATE
   borealis
   localsend-core-psv
-  SceNet
+  SceNet_stub
 )
 
 vita_create_self(localsend-handheld-psv.self localsend-handheld-psv UNSAFE NOASLR)

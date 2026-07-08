@@ -59,7 +59,7 @@ DEPENDS := $(OFILES:.o=.d)
 all: $(OUTPUT).nro
 
 $(OUTPUT).nro: $(OUTPUT).nacp $(OUTPUT).elf
-	@elf2nro $(OUTPUT).elf $@ --nacp=$(OUTPUT).nacp
+	@elf2nro $(OUTPUT).elf $@ --nacp=$(OUTPUT).nacp --icon=$(CURDIR)/assets/icon.png
 
 $(OUTPUT).nacp:
 	@nacptool --create "$(APP_TITLE)" "$(APP_AUTHOR)" "$(APP_VERSION)" $@

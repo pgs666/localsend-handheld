@@ -10,6 +10,7 @@ SWITCH_IMAGE="${SWITCH_IMAGE:-devkitpro/devkita64:latest}"
 PSV_IMAGE="${PSV_IMAGE:-vitasdk/vitasdk:latest}"
 HOST_BUILD_JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)"
 SWITCH_BUILD_JOBS="${SWITCH_BUILD_JOBS:-${HOST_BUILD_JOBS}}"
+PSV_BUILD_JOBS="${PSV_BUILD_JOBS:-${HOST_BUILD_JOBS}}"
 
 usage() {
   cat <<EOF
@@ -23,6 +24,7 @@ Environment:
   SWITCH_IMAGE      Default: ${SWITCH_IMAGE}
   PSV_IMAGE         Default: ${PSV_IMAGE}
   SWITCH_BUILD_JOBS Parallel jobs for Switch builds. Default: host CPU count (${SWITCH_BUILD_JOBS})
+  PSV_BUILD_JOBS    Parallel jobs for PSV builds. Default: host CPU count (${PSV_BUILD_JOBS})
 
 Examples:
   $0 desktop
@@ -115,7 +117,7 @@ build_psv_host() {
     exit 1
   fi
   cmake -S "${ROOT_DIR}/platform/psv" -B "${BUILD_ROOT}/psv"
-  cmake --build "${BUILD_ROOT}/psv" --parallel
+  cmake --build "${BUILD_ROOT}/psv" --parallel "${PSV_BUILD_JOBS}"
   cp "${BUILD_ROOT}/psv/localsend-handheld.vpk" "${ARTIFACT_DIR}/"
 }
 
@@ -123,7 +125,7 @@ build_psv_container() {
   container_run "${PSV_IMAGE}" "
     set -euo pipefail
     cmake -S platform/psv -B build/local/psv
-    cmake --build build/local/psv --parallel
+    cmake --build build/local/psv --parallel \"${PSV_BUILD_JOBS}\"
   "
   cp "${BUILD_ROOT}/psv/localsend-handheld.vpk" "${ARTIFACT_DIR}/"
 }

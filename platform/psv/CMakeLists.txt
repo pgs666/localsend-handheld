@@ -75,6 +75,7 @@ target_link_libraries(localsend-core-psv PUBLIC
 
 add_executable(localsend-core-psv-smoke
   src/core_smoke.cpp
+  src/core_smoke_compat.cpp
 )
 
 set_target_properties(localsend-core-psv-smoke PROPERTIES

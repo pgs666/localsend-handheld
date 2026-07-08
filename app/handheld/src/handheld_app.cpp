@@ -39,18 +39,19 @@ struct KeyLabels {
   std::string next_peer;
   std::string next_file;
   std::string save_peer;
+  std::string remove_peer;
 };
 
 KeyLabels key_labels_for_platform(PlatformKind platform) {
   switch (platform) {
   case PlatformKind::Switch:
-    return {"X", "B", "Y", "R", "L"};
+    return {"X", "B", "Y", "R", "L", "Minus"};
   case PlatformKind::Psv:
-    return {"Square", "Circle", "Triangle", "R", "L"};
+    return {"Square", "Circle", "Triangle", "R", "L", "Select"};
   case PlatformKind::Desktop:
-    return {"X", "B", "Y", "RB", "LB"};
+    return {"X", "B", "Y", "RB", "LB", "Back"};
   }
-  return {"X", "B", "Y", "RB", "LB"};
+  return {"X", "B", "Y", "RB", "LB", "Back"};
 }
 
 std::string initial_send_prompt(const KeyLabels& keys) {
@@ -212,7 +213,7 @@ brls::View* make_panel(const HandheldAppConfig& app_config,
   const KeyLabels keys = key_labels_for_platform(app_config.platform);
   const std::string hint_text =
       keys.send + " send  " + keys.next_peer + " peer  " + keys.next_file + " file  " +
-      keys.save_peer + " save  " + keys.cancel + " cancel";
+      keys.save_peer + " save  " + keys.remove_peer + " remove  " + keys.cancel + " cancel";
   auto* hint = make_label(hint_text, 20, brls::HorizontalAlign::CENTER, 780);
   hint->setMargins(24, 0, 0, 0);
   root->addView(hint);
@@ -535,6 +536,49 @@ int run_handheld_app(const HandheldAppConfig& config) {
       state.send_status = "Save peer failed";
       log_line("Save peer failed target=" + format_send_target_log(*selected) + " key=" + key);
     }
+    refresh_send_status(state.send_status, refs);
+    refresh_service_snapshot(*service, state, refs);
+    return true;
+  });
+  frame->registerAction(action_label("Remove peer", keys.remove_peer), brls::BUTTON_BACK, [&](brls::View*) {
+    if (!service) {
+      state.send_status = "Receive server not ready";
+      refresh_send_status(state.send_status, refs);
+      log_line("Remove peer rejected: service not ready");
+      return true;
+    }
+
+    const AppSnapshot snapshot = service->snapshot();
+    const auto selected = selected_online_device(snapshot.devices, state.selected_device_index);
+    if (!selected) {
+      state.send_status = "No online peer selected";
+      refresh_send_status(state.send_status, refs);
+      log_line("Remove peer rejected: no online peer");
+      return true;
+    }
+    if (selected->source != DeviceSource::Manual) {
+      state.send_status = "Selected peer is not manual";
+      refresh_send_status(state.send_status, refs);
+      log_line("Remove peer rejected: selected peer is not manual target=" + format_send_target_log(*selected));
+      return true;
+    }
+
+    const std::string peer = selected->device.alias.empty() ? selected->device.ip : selected->device.alias;
+    if (!service->remove_manual_device(selected->key)) {
+      state.send_status = "Remove peer failed";
+      log_line("Remove peer failed target=" + format_send_target_log(*selected));
+      refresh_send_status(state.send_status, refs);
+      return true;
+    }
+
+    if (service->save_config()) {
+      state.send_status = "Removed peer: " + peer;
+      log_line("Removed peer target=" + format_send_target_log(*selected));
+    } else {
+      state.send_status = "Removed peer; save failed";
+      log_line("Removed peer but save failed target=" + format_send_target_log(*selected));
+    }
+    state.selected_device_index = std::nullopt;
     refresh_send_status(state.send_status, refs);
     refresh_service_snapshot(*service, state, refs);
     return true;

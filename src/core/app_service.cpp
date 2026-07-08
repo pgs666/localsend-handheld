@@ -274,6 +274,34 @@ std::string AppService::add_manual_device(std::string ip,
   return devices_.upsert_manual(std::move(device));
 }
 
+bool AppService::remove_manual_device(const std::string& device_key) {
+  const std::optional<DeviceEntry> entry = devices_.get(device_key);
+  if (!entry || entry->source != DeviceSource::Manual) {
+    return false;
+  }
+
+  const AppConfig::ManualDevice manual{
+      entry->device.ip,
+      entry->device.port,
+      entry->device.https,
+      entry->device.alias,
+      entry->device.fingerprint,
+  };
+  const auto old_size = config_.manual_devices.size();
+  config_.manual_devices.erase(std::remove_if(config_.manual_devices.begin(),
+                                              config_.manual_devices.end(),
+                                              [&manual](const AppConfig::ManualDevice& device) {
+                                                return same_manual_device(device, manual);
+                                              }),
+                               config_.manual_devices.end());
+  if (config_.manual_devices.size() == old_size) {
+    return false;
+  }
+
+  devices_.remove(device_key);
+  return true;
+}
+
 bool AppService::send_files_to_device(const std::string& device_key, const std::vector<std::filesystem::path>& file_paths) {
   const std::optional<DeviceEntry> entry = devices_.get(device_key);
   if (!entry) {

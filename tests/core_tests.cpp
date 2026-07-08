@@ -754,6 +754,11 @@ void test_app_service_update_and_save_config() {
   require(service.config().manual_devices[1].alias == "Runtime Updated", "runtime manual config alias update failed");
   require(service.config().manual_devices[1].https, "runtime manual config protocol update failed");
   require(service.config().manual_devices[1].fingerprint == "runtime-fingerprint", "runtime manual config fingerprint update failed");
+  require(!service.remove_manual_device("missing"), "removing missing manual device should fail");
+  require(service.remove_manual_device("fingerprint:runtime-fingerprint"), "runtime manual remove failed");
+  require(service.config().manual_devices.size() == 1, "runtime manual remove should update config");
+  require(service.status().device_count == 1, "runtime manual remove should update device store");
+  require(!service.devices().get("fingerprint:runtime-fingerprint").has_value(), "runtime manual device should be removed");
   require(service.save_config(), "service config save failed");
 
   const auto loaded = localsend::load_config(localsend::PlatformKind::Desktop, updated.config_path);
@@ -761,11 +766,7 @@ void test_app_service_update_and_save_config() {
   require(loaded.port == 0, "service saved port failed");
   require(!loaded.discovery_enabled, "service saved discovery failed");
   require(loaded.auto_accept, "service saved auto accept failed");
-  require(loaded.manual_devices.size() == 2, "service saved manual device count failed");
-  require(loaded.manual_devices[1].ip == "192.168.1.41", "service saved runtime manual ip failed");
-  require(loaded.manual_devices[1].alias == "Runtime Updated", "service saved runtime manual alias failed");
-  require(loaded.manual_devices[1].https, "service saved runtime manual protocol failed");
-  require(loaded.manual_devices[1].fingerprint == "runtime-fingerprint", "service saved runtime manual fingerprint failed");
+  require(loaded.manual_devices.size() == 1, "service saved manual device count failed");
 
   require(service.start_server(), "service config test server failed to start");
   auto rejected = updated;

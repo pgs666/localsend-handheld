@@ -86,6 +86,7 @@ public:
                                 bool https,
                                 std::string alias = "",
                                 std::string fingerprint = "");
+  bool remove_manual_device(const std::string& device_key);
 
   bool send_files_to_device(const std::string& device_key, const std::vector<std::filesystem::path>& file_paths);
   bool start_send_to_device(const std::string& device_key, std::vector<std::filesystem::path> file_paths);

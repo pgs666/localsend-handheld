@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <chrono>
 #include <exception>
 #include <memory>
 #include <string>
@@ -104,7 +105,7 @@ brls::Box* makePanel(const RuntimeState& state)
     root->addView(makeSection("Feature wiring"));
     root->addView(makeRow("Receive server", state.serverStatus));
     root->addView(makeRow("Info endpoint", "http://" + state.ip + ":" + std::to_string(state.serverPort) + "/api/localsend/v2/info"));
-    root->addView(makeRow("Discovery", "Not started on Vita UI yet"));
+    root->addView(makeRow("Discovery", "Periodic announce enabled"));
     root->addView(makeRow("File browser", "Core exists; controller UI pending"));
 
     auto* hint = makeLabel("Press START to exit", 20, brls::HorizontalAlign::CENTER, 780);
@@ -121,7 +122,7 @@ std::unique_ptr<localsend::AppService> startService(RuntimeState& state)
     config.port = kPort;
     config.inbox_path = kInboxPath;
     config.config_path = kConfigPath;
-    config.discovery_enabled = false;
+    config.discovery_enabled = true;
 
     localsend::AppServiceOptions options;
     options.platform = localsend::PlatformKind::Psv;
@@ -136,6 +137,10 @@ std::unique_ptr<localsend::AppService> startService(RuntimeState& state)
         state.serverPort = service->status().port;
         state.serverStatus = "Started";
         logLine("HTTP server started on port " + std::to_string(state.serverPort));
+        if (service->announce_once())
+            logLine("Discovery announcement sent");
+        else
+            logLine("Discovery announcement failed");
     } else {
         state.serverStatus = "Failed to start";
         logLine("HTTP server failed to start");
@@ -184,8 +189,13 @@ int main(int argc, char* argv[])
     frame->setTitle("LocalSend Handheld");
     brls::Application::pushActivity(new brls::Activity(frame));
 
-    while (brls::Application::mainLoop())
-        ;
+    auto nextAnnounce = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (brls::Application::mainLoop()) {
+        if (service && state.serverStarted && std::chrono::steady_clock::now() >= nextAnnounce) {
+            service->announce_once();
+            nextAnnounce = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        }
+    }
 
     return EXIT_SUCCESS;
 }

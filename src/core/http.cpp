@@ -995,7 +995,7 @@ HttpResponse LocalSendServer::route(const HttpRequest& request, const std::strin
     return handle_register(request, remote_ip);
   }
   if (request.method == "POST" && (route_is(request, kRoutePrepareUpload) || route_is(request, kRoutePrepareUploadV1))) {
-    return handle_prepare_upload(request, route_is(request, kRoutePrepareUpload));
+    return handle_prepare_upload(request, route_is(request, kRoutePrepareUpload), remote_ip);
   }
   if (request.method == "POST" && (route_is(request, kRouteUpload) || route_is(request, kRouteUploadV1))) {
     return text_response(400, "upload route requires streaming handler");
@@ -1038,7 +1038,7 @@ HttpResponse LocalSendServer::handle_register(const HttpRequest& request, const 
   return json_response(200, to_json(static_cast<const InfoDto&>(self_)));
 }
 
-HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request, bool v2) {
+HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request, bool v2, const std::string& remote_ip) {
   PrepareUploadRequestDto dto;
   try {
     dto = prepare_upload_request_from_json(Json::parse(request.body));
@@ -1061,7 +1061,7 @@ HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request, 
                                             pending.dto.file_name,
                                             pending.dto.size,
                                             dto.info.alias,
-                                            "");
+                                            remote_ip);
       transfers_->set_status(pending.transfer_id, TransferStatus::Preparing);
     }
     session.files.emplace(pending.dto.id, pending);

@@ -113,7 +113,7 @@ private:
 
   HttpResponse handle_info(const HttpRequest& request) const;
   HttpResponse handle_register(const HttpRequest& request, const std::string& remote_ip);
-  HttpResponse handle_prepare_upload(const HttpRequest& request, bool v2);
+  HttpResponse handle_prepare_upload(const HttpRequest& request, bool v2, const std::string& remote_ip);
   HttpResponse handle_upload(HttpStream& stream, const HttpRequest& request, const std::string& initial_body, bool v2);
   HttpResponse handle_cancel(const HttpRequest& request);
 

@@ -1330,6 +1330,7 @@ void test_http_transfer_store_updates() {
   require(received[0].status == localsend::TransferStatus::Completed, "receive transfer should complete");
   require(received[0].bytes_transferred == received[0].size, "receive transfer byte count failed");
   require(received[0].peer_alias == "Sender", "receive transfer peer alias failed");
+  require(received[0].peer_ip == "127.0.0.1", "receive transfer peer ip failed");
 
   server.stop();
   std::filesystem::remove_all(dir);

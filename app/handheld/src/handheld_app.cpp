@@ -7,15 +7,20 @@
 
 #include <borealis.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
+#if LOCALSEND_PLATFORM_PSV
+#include <pthread.h>
+#endif
 
 namespace localsend::handheld {
 namespace {
@@ -384,6 +389,116 @@ void update_core_state_from_service(AppService& service, RuntimeState& state) {
   }
 }
 
+#if LOCALSEND_PLATFORM_PSV
+struct CoreStartJob {
+  std::atomic<bool> running{false};
+  std::atomic<bool> done{false};
+  pthread_t thread{};
+  bool thread_started = false;
+  HandheldAppConfig app_config;
+  AppConfig service_config;
+  RuntimeState input_state;
+  RuntimeState output_state;
+  std::unique_ptr<AppService> output_service;
+  std::string error;
+  std::mutex mutex;
+};
+
+void* core_start_thread_entry(void* arg) {
+  auto* job = static_cast<CoreStartJob*>(arg);
+  RuntimeState local_state = job->input_state;
+  std::unique_ptr<AppService> local_service;
+  std::string local_error;
+  try {
+    local_service = start_service(job->app_config, job->service_config, local_state);
+  } catch (const std::exception& e) {
+    local_state.server_status = std::string("Exception: ") + e.what();
+    local_error = local_state.server_status;
+    log_line(local_state.server_status);
+  } catch (...) {
+    local_state.server_status = "Unknown exception";
+    local_error = local_state.server_status;
+    log_line(local_state.server_status);
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(job->mutex);
+    job->output_state = std::move(local_state);
+    job->output_service = std::move(local_service);
+    job->error = std::move(local_error);
+  }
+  job->done = true;
+  return nullptr;
+}
+
+void begin_core_start(CoreStartJob& job,
+                      const HandheldAppConfig& app_config,
+                      const AppConfig& service_config,
+                      const RuntimeState& state) {
+  if (job.running) {
+    return;
+  }
+  if (job.thread_started) {
+    pthread_join(job.thread, nullptr);
+    job.thread_started = false;
+  }
+
+  job.app_config = app_config;
+  job.service_config = service_config;
+  job.input_state = state;
+  job.done = false;
+  job.running = true;
+  {
+    std::lock_guard<std::mutex> lock(job.mutex);
+    job.output_service.reset();
+    job.error.clear();
+    job.output_state = state;
+  }
+
+  if (pthread_create(&job.thread, nullptr, &core_start_thread_entry, &job) == 0) {
+    job.thread_started = true;
+  } else {
+    job.running = false;
+    job.done = true;
+    std::lock_guard<std::mutex> lock(job.mutex);
+    job.output_state = state;
+    job.output_state.server_status = "Failed to create core thread";
+    job.error = job.output_state.server_status;
+    log_line(job.error);
+  }
+}
+
+bool consume_core_start(CoreStartJob& job, std::unique_ptr<AppService>& service, RuntimeState& state) {
+  if (!job.running || !job.done) {
+    return false;
+  }
+  if (job.thread_started) {
+    pthread_join(job.thread, nullptr);
+    job.thread_started = false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(job.mutex);
+    service = std::move(job.output_service);
+    state = std::move(job.output_state);
+    if (!job.error.empty()) {
+      log_line("Core start worker failed: " + job.error);
+    }
+  }
+  job.running = false;
+  job.done = false;
+  return true;
+}
+
+void cleanup_core_start(CoreStartJob& job) {
+  if (job.thread_started) {
+    pthread_join(job.thread, nullptr);
+    job.thread_started = false;
+  }
+  job.running = false;
+  job.done = false;
+}
+#endif
+
 } // namespace
 
 int run_handheld_app(const HandheldAppConfig& config) {
@@ -436,6 +551,9 @@ int run_handheld_app(const HandheldAppConfig& config) {
   log_line("Selected file: " + state.selected_file_status);
 
   std::unique_ptr<AppService> service;
+#if LOCALSEND_PLATFORM_PSV
+  CoreStartJob core_start_job;
+#endif
   const bool start_service_before_ui = config.platform == PlatformKind::Desktop;
   if (start_service_before_ui) {
     try {
@@ -582,10 +700,21 @@ int run_handheld_app(const HandheldAppConfig& config) {
     return true;
   });
   frame->registerAction(action_label("Restart core", keys.restart_core), brls::BUTTON_A, [&](brls::View*) {
+#if LOCALSEND_PLATFORM_PSV
+    if (core_start_job.running) {
+      state.server_status = "Core already starting";
+      refresh_panel(state, refs);
+      log_line("Core restart rejected: startup already running");
+      return true;
+    }
+#endif
     if (!service) {
       state.server_status = "Restarting";
       refresh_panel(state, refs);
       log_line("Core restart requested before service exists");
+#if LOCALSEND_PLATFORM_PSV
+      begin_core_start(core_start_job, config, service_config, state);
+#else
       try {
         service = start_service(config, service_config, state);
       } catch (const std::exception& e) {
@@ -595,7 +724,15 @@ int run_handheld_app(const HandheldAppConfig& config) {
         state.server_status = "Unknown exception";
         log_line(state.server_status);
       }
+#endif
       refresh_panel(state, refs);
+      return true;
+    }
+
+    if (service->status().send_running) {
+      state.send_status = "Cancel send before restarting core";
+      refresh_send_status(state.send_status, refs);
+      log_line("Core restart rejected: send running");
       return true;
     }
 
@@ -603,6 +740,12 @@ int run_handheld_app(const HandheldAppConfig& config) {
     state.server_status = "Restarting";
     state.discovery_status = "Restarting";
     refresh_panel(state, refs);
+#if LOCALSEND_PLATFORM_PSV
+    service.reset();
+    state.server_started = false;
+    state.discovery_started = false;
+    begin_core_start(core_start_job, config, service_config, state);
+#else
     const bool ok = service->restart_core();
     update_core_state_from_service(*service, state);
     if (!ok) {
@@ -611,6 +754,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
     } else {
       log_line("Core restart ok");
     }
+#endif
     refresh_panel(state, refs);
     return true;
   });
@@ -710,6 +854,12 @@ int run_handheld_app(const HandheldAppConfig& config) {
     if (!service && !state.server_started && config.platform != PlatformKind::Desktop &&
         std::chrono::steady_clock::now() >= deferred_start) {
       log_line("Deferred handheld receive server start");
+#if LOCALSEND_PLATFORM_PSV
+      state.server_status = "Starting";
+      refresh_panel(state, refs);
+      begin_core_start(core_start_job, config, service_config, state);
+      deferred_start = std::chrono::steady_clock::time_point::max();
+#else
       try {
         service = start_service(config, service_config, state);
       } catch (const std::exception& e) {
@@ -721,7 +871,15 @@ int run_handheld_app(const HandheldAppConfig& config) {
       }
       refresh_panel(state, refs);
       next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+#endif
     }
+
+#if LOCALSEND_PLATFORM_PSV
+    if (consume_core_start(core_start_job, service, state)) {
+      refresh_panel(state, refs);
+      next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    }
+#endif
 
     if (service && state.server_started && config.platform == PlatformKind::Switch) {
       service->poll_server_once();
@@ -742,6 +900,9 @@ int run_handheld_app(const HandheldAppConfig& config) {
   log_line("mainLoop exited");
 
   service.reset();
+#if LOCALSEND_PLATFORM_PSV
+  cleanup_core_start(core_start_job);
+#endif
   if (g_log) {
     std::fclose(g_log);
     g_log = nullptr;

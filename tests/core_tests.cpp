@@ -195,6 +195,90 @@ void test_http_server_routes_and_upload() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_prepare_uses_file_id() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-id-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Receiver";
+  self.protocol = localsend::ProtocolType::Http;
+
+  localsend::LocalSendServer server(self, dir);
+  require(server.start(0), "server failed to start for id test");
+
+  localsend::PrepareUploadRequestDto request;
+  request.info.alias = "Sender";
+  request.info.port = 12345;
+  request.info.protocol = localsend::ProtocolType::Http;
+
+  localsend::FileDto file;
+  file.id = "official-file-id";
+  file.file_name = "official.txt";
+  file.size = 4;
+  file.file_type = "text/plain";
+  request.files.emplace("map-key-that-must-not-be-used", file);
+
+  const auto prepare = localsend::http_post("127.0.0.1", server.port(), localsend::kRoutePrepareUpload, localsend::to_json(request).dump());
+  require(prepare.status == 200, "prepare upload id test failed");
+  const auto response = localsend::prepare_upload_response_from_json(localsend::Json::parse(prepare.body));
+  require(response.files.count("official-file-id") == 1, "prepare response must use FileDto.id");
+  require(response.files.count("map-key-that-must-not-be-used") == 0, "prepare response must not use request map key");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
+void test_http_server_chunked_upload() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-chunked-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Receiver";
+  self.protocol = localsend::ProtocolType::Http;
+
+  localsend::LocalSendServer server(self, dir);
+  require(server.start(0), "server failed to start for chunked test");
+
+  const std::vector<std::string> chunks = {"hello ", "chunked ", "localsend"};
+  std::string expected;
+  for (const auto& chunk : chunks) {
+    expected += chunk;
+  }
+
+  localsend::PrepareUploadRequestDto request;
+  request.info.alias = "Sender";
+  request.info.port = 12345;
+  request.info.protocol = localsend::ProtocolType::Http;
+
+  localsend::FileDto file;
+  file.id = "chunked-file-id";
+  file.file_name = "chunked.txt";
+  file.size = expected.size();
+  file.file_type = "text/plain";
+  request.files.emplace(file.id, file);
+
+  const auto prepare = localsend::http_post("127.0.0.1", server.port(), localsend::kRoutePrepareUpload, localsend::to_json(request).dump());
+  require(prepare.status == 200, "prepare upload chunked test failed");
+  const auto response = localsend::prepare_upload_response_from_json(localsend::Json::parse(prepare.body));
+  const std::string token = response.files.at(file.id);
+
+  const std::string upload_path = std::string(localsend::kRouteUpload) + "?sessionId=" + response.session_id + "&fileId=" + file.id + "&token=" + token;
+  const auto upload = localsend::http_post_chunked("127.0.0.1", server.port(), upload_path, chunks, file.file_type);
+  require(upload.status == 200, "chunked upload failed");
+  require(localsend::Json::parse(upload.body).is_object(), "chunked upload response should be JSON object");
+
+  const auto received = dir / "chunked.txt";
+  require(std::filesystem::exists(received), "chunked uploaded file missing");
+  std::ifstream in(received, std::ios::binary);
+  const std::string actual((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  require(actual == expected, "chunked uploaded file content mismatch");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -210,6 +294,8 @@ int main() {
     test_safe_filename();
     test_unique_destination();
     test_http_server_routes_and_upload();
+    test_http_prepare_uses_file_id();
+    test_http_server_chunked_upload();
   } catch (const std::exception& e) {
     std::cerr << "test failed: " << e.what() << '\n';
     return 1;

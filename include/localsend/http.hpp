@@ -19,6 +19,7 @@ struct HttpRequest {
   std::map<std::string, std::string> headers;
   std::string body;
   std::size_t content_length = 0;
+  bool chunked = false;
 };
 
 struct HttpResponse {
@@ -38,6 +39,11 @@ HttpResult http_post(const std::string& host,
                      const std::string& path,
                      const std::string& body,
                      const std::string& content_type = "application/json");
+HttpResult http_post_chunked(const std::string& host,
+                             int port,
+                             const std::string& path,
+                             const std::vector<std::string>& chunks,
+                             const std::string& content_type = "application/octet-stream");
 
 class LocalSendServer {
 public:

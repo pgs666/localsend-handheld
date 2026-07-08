@@ -7,6 +7,7 @@
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
+#include <cctype>
 #include <fstream>
 #include <iostream>
 #include <netdb.h>
@@ -159,12 +160,29 @@ std::map<std::string, std::string> parse_headers(std::istringstream& stream) {
   return headers;
 }
 
+std::string lower_ascii(std::string value) {
+  std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return value;
+}
+
 std::size_t content_length(const std::map<std::string, std::string>& headers) {
-  const auto it = headers.find("Content-Length");
-  if (it == headers.end()) {
-    return 0;
+  for (const auto& entry : headers) {
+    if (lower_ascii(entry.first) == "content-length") {
+      return static_cast<std::size_t>(std::stoull(entry.second));
+    }
   }
-  return static_cast<std::size_t>(std::stoull(it->second));
+  return 0;
+}
+
+bool transfer_encoding_chunked(const std::map<std::string, std::string>& headers) {
+  for (const auto& entry : headers) {
+    if (lower_ascii(entry.first) == "transfer-encoding" && lower_ascii(entry.second).find("chunked") != std::string::npos) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool read_body(int fd, std::string& buffer, std::size_t header_end, std::size_t length, std::string& body) {
@@ -204,8 +222,9 @@ bool parse_request_headers(int fd, HttpRequest& request, std::string& initial_bo
   }
 
   request.content_length = content_length(request.headers);
+  request.chunked = transfer_encoding_chunked(request.headers);
   initial_body = buffer.substr(header_end);
-  if (initial_body.size() > request.content_length) {
+  if (!request.chunked && initial_body.size() > request.content_length) {
     initial_body.resize(request.content_length);
   }
   return true;
@@ -225,6 +244,74 @@ bool read_remaining_body(int fd, const std::string& initial_body, std::size_t le
     body.resize(length);
   }
   return true;
+}
+
+bool fill_stream_buffer(int fd, std::string& buffer, std::size_t pos, std::size_t need) {
+  char chunk[8192];
+  while (buffer.size() - pos < need) {
+    const ssize_t got = ::recv(fd, chunk, sizeof(chunk), 0);
+    if (got <= 0) {
+      return false;
+    }
+    buffer.append(chunk, static_cast<std::size_t>(got));
+  }
+  return true;
+}
+
+bool read_chunked_body_to_stream(int fd, const std::string& initial_body, std::ostream& out, std::size_t& written) {
+  std::string buffer = initial_body;
+  std::size_t pos = 0;
+  written = 0;
+
+  while (true) {
+    std::size_t line_end = buffer.find("\r\n", pos);
+    while (line_end == std::string::npos) {
+      if (!fill_stream_buffer(fd, buffer, pos, buffer.size() - pos + 1)) {
+        return false;
+      }
+      line_end = buffer.find("\r\n", pos);
+    }
+
+    std::string size_text = buffer.substr(pos, line_end - pos);
+    const std::size_t semicolon = size_text.find(';');
+    if (semicolon != std::string::npos) {
+      size_text.resize(semicolon);
+    }
+    const std::size_t chunk_size = static_cast<std::size_t>(std::strtoull(size_text.c_str(), nullptr, 16));
+    pos = line_end + 2;
+
+    if (chunk_size == 0) {
+      while (true) {
+        line_end = buffer.find("\r\n", pos);
+        while (line_end == std::string::npos) {
+          if (!fill_stream_buffer(fd, buffer, pos, buffer.size() - pos + 1)) {
+            return false;
+          }
+          line_end = buffer.find("\r\n", pos);
+        }
+        if (line_end == pos) {
+          return true;
+        }
+        pos = line_end + 2;
+      }
+    }
+
+    if (!fill_stream_buffer(fd, buffer, pos, chunk_size + 2)) {
+      return false;
+    }
+    out.write(buffer.data() + pos, static_cast<std::streamsize>(chunk_size));
+    written += chunk_size;
+    pos += chunk_size;
+    if (pos + 1 >= buffer.size() || buffer[pos] != '\r' || buffer[pos + 1] != '\n') {
+      return false;
+    }
+    pos += 2;
+
+    if (pos > 64 * 1024) {
+      buffer.erase(0, pos);
+      pos = 0;
+    }
+  }
 }
 
 bool parse_response(int fd, HttpResult& result) {
@@ -336,6 +423,45 @@ HttpResult post_file_raw(const std::string& host,
   return result;
 }
 
+HttpResult post_chunked_raw(const std::string& host,
+                            int port,
+                            const std::string& path,
+                            const std::vector<std::string>& chunks,
+                            const std::string& content_type) {
+  HttpResult result;
+  const int fd = connect_tcp(host, port);
+  if (fd < 0) {
+    return result;
+  }
+
+  std::ostringstream request;
+  request << "POST " << path << " HTTP/1.1\r\n"
+          << "Host: " << host << ':' << port << "\r\n"
+          << "Connection: close\r\n"
+          << "Transfer-Encoding: chunked\r\n"
+          << "Content-Type: " << content_type << "\r\n\r\n";
+
+  const std::string headers = request.str();
+  bool ok = send_all(fd, headers.data(), headers.size());
+  for (const auto& chunk : chunks) {
+    if (!ok) {
+      break;
+    }
+    std::ostringstream prefix;
+    prefix << std::hex << chunk.size() << "\r\n";
+    const std::string header = prefix.str();
+    ok = send_all(fd, header.data(), header.size()) &&
+         send_all(fd, chunk.data(), chunk.size()) &&
+         send_all(fd, "\r\n", 2);
+  }
+  ok = ok && send_all(fd, "0\r\n\r\n", 5);
+  if (ok) {
+    parse_response(fd, result);
+  }
+  close_fd(fd);
+  return result;
+}
+
 HttpResponse json_response(int status, Json json) {
   HttpResponse response;
   response.status = status;
@@ -363,6 +489,14 @@ HttpResult http_post(const std::string& host,
                      const std::string& body,
                      const std::string& content_type) {
   return request_raw(host, port, "POST", path, body, content_type);
+}
+
+HttpResult http_post_chunked(const std::string& host,
+                             int port,
+                             const std::string& path,
+                             const std::vector<std::string>& chunks,
+                             const std::string& content_type) {
+  return post_chunked_raw(host, port, path, chunks, content_type);
 }
 
 LocalSendServer::LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox)
@@ -504,8 +638,8 @@ HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request) 
     pending.dto = entry.second;
     pending.token = random_hex(12);
     pending.destination = unique_destination_path(inbox_, pending.dto.file_name);
-    session.files.emplace(entry.first, pending);
-    response.files.emplace(entry.first, pending.token);
+    session.files.emplace(pending.dto.id, pending);
+    response.files.emplace(pending.dto.id, pending.token);
   }
 
   {
@@ -525,6 +659,7 @@ HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& re
   }
 
   std::filesystem::path destination;
+  std::uint64_t expected_size = 0;
   {
     std::lock_guard<std::mutex> lock(sessions_mutex_);
     auto session = sessions_.find(session_it->second);
@@ -538,10 +673,11 @@ HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& re
     if (file->second.token != token_it->second) {
       return text_response(403, "invalid token");
     }
-    if (request.content_length != file->second.dto.size) {
+    if (!request.chunked && request.content_length != file->second.dto.size) {
       return text_response(400, "file size mismatch");
     }
     destination = file->second.destination;
+    expected_size = file->second.dto.size;
   }
 
   std::ofstream out(destination, std::ios::binary);
@@ -550,23 +686,35 @@ HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& re
   }
 
   std::size_t written = 0;
-  if (!initial_body.empty()) {
-    out.write(initial_body.data(), static_cast<std::streamsize>(initial_body.size()));
-    written += initial_body.size();
-  }
-
-  std::vector<char> buffer(kTransferBufferSize);
-  while (written < request.content_length) {
-    const std::size_t remaining = request.content_length - written;
-    const std::size_t chunk_size = std::min(buffer.size(), remaining);
-    const ssize_t got = ::recv(client_fd, buffer.data(), chunk_size, 0);
-    if (got <= 0) {
+  if (request.chunked) {
+    if (!read_chunked_body_to_stream(client_fd, initial_body, out, written)) {
       return text_response(400, "incomplete upload");
     }
-    out.write(buffer.data(), static_cast<std::streamsize>(got));
-    written += static_cast<std::size_t>(got);
+  } else {
+    if (!initial_body.empty()) {
+      out.write(initial_body.data(), static_cast<std::streamsize>(initial_body.size()));
+      written += initial_body.size();
+    }
+
+    std::vector<char> buffer(kTransferBufferSize);
+    while (written < request.content_length) {
+      const std::size_t remaining = request.content_length - written;
+      const std::size_t chunk_size = std::min(buffer.size(), remaining);
+      const ssize_t got = ::recv(client_fd, buffer.data(), chunk_size, 0);
+      if (got <= 0) {
+        return text_response(400, "incomplete upload");
+      }
+      out.write(buffer.data(), static_cast<std::streamsize>(got));
+      written += static_cast<std::size_t>(got);
+    }
   }
 
+  if (written != request.content_length && !request.chunked) {
+    return text_response(400, "incomplete upload");
+  }
+  if (request.chunked && written != expected_size) {
+    return text_response(400, "file size mismatch");
+  }
   if (!out) {
     return text_response(500, "failed to write destination");
   }
@@ -582,7 +730,7 @@ HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& re
     }
   }
 
-  return text_response(200, "ok");
+  return json_response(200, Json::object());
 }
 
 HttpResponse LocalSendServer::handle_cancel(const HttpRequest& request) {

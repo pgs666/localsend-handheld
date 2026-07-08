@@ -6,6 +6,7 @@
 #include "localsend/safe_path.hpp"
 #include "localsend/security.hpp"
 #include "localsend/tls.hpp"
+#include "localsend/transfer.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -98,6 +99,72 @@ void test_multicast_dto() {
   require(device.alias == "Switch", "multicast alias failed");
   require(device.port == 53317, "multicast port failed");
   require(!device.https, "multicast protocol failed");
+}
+
+void test_transfer_store_lifecycle() {
+  localsend::TransferStore store;
+  const auto receive_id = store.add(localsend::TransferDirection::Receive,
+                                    "photo.jpg",
+                                    100,
+                                    "Phone",
+                                    "192.168.1.20");
+  const auto send_id = store.add(localsend::TransferDirection::Send,
+                                 "save.zip",
+                                 20,
+                                 "Desktop",
+                                 "192.168.1.30");
+
+  require(receive_id != send_id, "transfer ids should be unique");
+  require(store.snapshot().size() == 2, "transfer snapshot size failed");
+
+  auto receive = store.get(receive_id);
+  require(receive.has_value(), "transfer get failed");
+  require(receive->status == localsend::TransferStatus::Pending, "new transfer should be pending");
+  require(receive->direction == localsend::TransferDirection::Receive, "transfer direction failed");
+  require(receive->file_name == "photo.jpg", "transfer file name failed");
+  require(receive->peer_alias == "Phone", "transfer peer alias failed");
+
+  require(store.set_status(receive_id, localsend::TransferStatus::Preparing), "transfer preparing failed");
+  require(store.set_progress(receive_id, 40), "transfer progress failed");
+  receive = store.get(receive_id);
+  require(receive->status == localsend::TransferStatus::Transferring, "transfer progress should mark transferring");
+  require(receive->bytes_transferred == 40, "transfer bytes failed");
+
+  require(store.set_progress(receive_id, 500), "transfer completed progress failed");
+  receive = store.get(receive_id);
+  require(receive->status == localsend::TransferStatus::Completed, "transfer should complete at full size");
+  require(receive->bytes_transferred == 100, "transfer progress should clamp to size");
+
+  require(store.fail(send_id, "network error"), "transfer fail failed");
+  auto send = store.get(send_id);
+  require(send->status == localsend::TransferStatus::Failed, "failed transfer status failed");
+  require(send->error == "network error", "failed transfer error failed");
+
+  store.clear_completed();
+  require(store.snapshot().empty(), "clear completed should remove terminal transfers");
+}
+
+void test_transfer_store_cancel_and_strings() {
+  localsend::TransferStore store;
+  const auto id = store.add(localsend::TransferDirection::Send, "demo.bin", 8, "Peer", "127.0.0.1");
+
+  require(std::string(localsend::to_string(localsend::TransferDirection::Send)) == "send", "send direction string failed");
+  require(std::string(localsend::to_string(localsend::TransferDirection::Receive)) == "receive", "receive direction string failed");
+  require(std::string(localsend::to_string(localsend::TransferStatus::Pending)) == "pending", "pending status string failed");
+  require(std::string(localsend::to_string(localsend::TransferStatus::Preparing)) == "preparing", "preparing status string failed");
+  require(std::string(localsend::to_string(localsend::TransferStatus::Transferring)) == "transferring", "transferring status string failed");
+  require(std::string(localsend::to_string(localsend::TransferStatus::Completed)) == "completed", "completed status string failed");
+  require(std::string(localsend::to_string(localsend::TransferStatus::Failed)) == "failed", "failed status string failed");
+  require(std::string(localsend::to_string(localsend::TransferStatus::Cancelled)) == "cancelled", "cancelled status string failed");
+
+  require(store.cancel(id), "transfer cancel failed");
+  const auto item = store.get(id);
+  require(item.has_value(), "cancelled transfer missing");
+  require(item->status == localsend::TransferStatus::Cancelled, "cancelled transfer status failed");
+  require(!store.cancel(9999), "unknown transfer cancel should fail");
+
+  store.clear();
+  require(store.snapshot().empty(), "transfer clear failed");
 }
 
 void test_security_fingerprint() {
@@ -870,6 +937,8 @@ int main() {
     test_prepare_upload_dto();
     test_prepare_upload_response_dto();
     test_multicast_dto();
+    test_transfer_store_lifecycle();
+    test_transfer_store_cancel_and_strings();
     test_security_fingerprint();
     test_tls_identity_persistence();
     test_mbedtls_linked();

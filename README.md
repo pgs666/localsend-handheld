@@ -34,7 +34,42 @@ cmake -S . -B build-switch -DPLATFORM_DESKTOP=OFF -DPLATFORM_SWITCH=ON
 cmake -S . -B build-psv -DPLATFORM_DESKTOP=OFF -DPLATFORM_PSV=ON
 ```
 
-The repository CI builds handheld artifacts directly with platform SDK containers:
+For local artifact builds, use the helper script:
+
+```bash
+./scripts/build_handheld_artifacts.sh desktop
+USE_CONTAINER=1 ./scripts/build_handheld_artifacts.sh both
+```
+
+`USE_CONTAINER=1` builds the handheld artifacts with Docker or Podman SDK
+containers:
+
+- Switch: `devkitpro/devkita64`, producing `build/artifacts/local/localsend-handheld.nro`.
+- PSV: `vitasdk/vitasdk`, producing `build/artifacts/local/localsend-handheld.vpk`.
+
+Switch builds default to the host CPU count for parallelism. Override this when
+needed:
+
+```bash
+SWITCH_BUILD_JOBS=6 USE_CONTAINER=1 ./scripts/build_handheld_artifacts.sh switch
+```
+
+If the build server needs a LAN SOCKS proxy for Docker Hub or GitHub release
+downloads, export proxy variables before running the helper. They are passed
+through into the SDK containers:
+
+```bash
+export ALL_PROXY=socks5h://192.168.31.228:7890
+export HTTPS_PROXY="$ALL_PROXY"
+export HTTP_PROXY="$ALL_PROXY"
+export NO_PROXY=localhost,127.0.0.1,::1,192.168.31.0/24
+USE_CONTAINER=1 ./scripts/build_handheld_artifacts.sh both
+```
+
+Docker daemon image pulls also need a daemon-level proxy when direct Docker Hub
+access is blocked.
+
+The repository CI also builds handheld artifacts directly with platform SDK containers:
 
 - Switch: `platform/switch/build-ui/localsend-handheld.nro` via `devkitpro/devkita64`.
 - PSV: `platform/psv/build/localsend-handheld.vpk` via `vitasdk/vitasdk`, including `sce_sys/icon0.png`.
@@ -43,12 +78,11 @@ Local platform builds require devkitPro/libnx or VitaSDK installed.
 
 ## Deploy
 
-After a successful CI run, download artifacts with `gh run download` or use the
-existing files under `build/artifacts/<run-id>/`. Then deploy/probe devices with:
+After a successful local or CI build, deploy/probe devices with:
 
 ```bash
-SWITCH_FTP_PASS=... ARTIFACT_DIR=build/artifacts/28927001724 ./scripts/deploy_handheld_artifacts.sh switch
-ARTIFACT_DIR=build/artifacts/28927001724 ./scripts/deploy_handheld_artifacts.sh psv
+SWITCH_FTP_PASS=... ARTIFACT_DIR=build/artifacts/local ./scripts/deploy_handheld_artifacts.sh switch
+ARTIFACT_DIR=build/artifacts/local ./scripts/deploy_handheld_artifacts.sh psv
 ./scripts/deploy_handheld_artifacts.sh probe
 SWITCH_FTP_PASS=... ./scripts/deploy_handheld_artifacts.sh logs
 ```

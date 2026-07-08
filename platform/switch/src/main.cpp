@@ -1,5 +1,6 @@
 #include <switch.h>
 
+#include <arpa/inet.h>
 #include <cerrno>
 #include <cstdlib>
 #include <cstdio>

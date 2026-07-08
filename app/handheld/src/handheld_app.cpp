@@ -34,6 +34,11 @@ struct RuntimeState {
   std::string server_status = "Not started";
 };
 
+struct PanelRefs {
+  brls::Label* server_status = nullptr;
+  brls::Label* discovery_status = nullptr;
+};
+
 brls::Label* make_label(const std::string& text,
                         float size,
                         brls::HorizontalAlign align = brls::HorizontalAlign::LEFT,
@@ -46,7 +51,7 @@ brls::Label* make_label(const std::string& text,
   return label;
 }
 
-brls::Box* make_row(const std::string& name, const std::string& value) {
+brls::Box* make_row(const std::string& name, const std::string& value, brls::Label** value_ref = nullptr) {
   auto* row = new brls::Box(brls::Axis::ROW);
   row->setWidth(780);
   row->setMargins(0, 0, 10, 0);
@@ -55,6 +60,9 @@ brls::Box* make_row(const std::string& name, const std::string& value) {
   auto* key = make_label(name, 20, brls::HorizontalAlign::LEFT, 230);
   auto* text = make_label(value, 20, brls::HorizontalAlign::LEFT, 520);
   text->setGrow(1.0f);
+  if (value_ref) {
+    *value_ref = text;
+  }
 
   row->addView(key);
   row->addView(text);
@@ -67,7 +75,7 @@ brls::Label* make_section(const std::string& text) {
   return label;
 }
 
-brls::Box* make_panel(const HandheldAppConfig& config, const RuntimeState& state) {
+brls::Box* make_panel(const HandheldAppConfig& config, const RuntimeState& state, PanelRefs& refs) {
   auto* root = new brls::Box(brls::Axis::COLUMN);
   root->setGrow(1.0f);
   root->setPadding(34, 70, 34, 70);
@@ -94,18 +102,31 @@ brls::Box* make_panel(const HandheldAppConfig& config, const RuntimeState& state
   root->addView(make_row("Log", config.log_path));
 
   root->addView(make_section("Feature wiring"));
-  root->addView(make_row("Receive server", state.server_status));
+  root->addView(make_row("Receive server", state.server_status, &refs.server_status));
   root->addView(make_row("Info endpoint",
                          "http://" + state.ip + ":" + std::to_string(state.server_port) +
                              "/api/localsend/v2/info"));
-  root->addView(make_row("Discovery", config.enable_discovery ? "Periodic announce enabled" : "Disabled"));
+  root->addView(make_row("Discovery", config.enable_discovery ? "Ready" : "Disabled", &refs.discovery_status));
   root->addView(make_row("File browser", "Core exists; controller UI pending"));
 
-  auto* hint = make_label("Press START to exit", 20, brls::HorizontalAlign::CENTER, 780);
+  const std::string hint_text =
+      config.platform == PlatformKind::Switch
+          ? "A: start receive server   X: announce discovery"
+          : "Receive server starts automatically";
+  auto* hint = make_label(hint_text, 20, brls::HorizontalAlign::CENTER, 780);
   hint->setMargins(24, 0, 0, 0);
   root->addView(hint);
 
   return root;
+}
+
+void refresh_panel(const RuntimeState& state, const PanelRefs& refs) {
+  if (refs.server_status) {
+    refs.server_status->setText(state.server_status);
+  }
+  if (refs.discovery_status && !state.server_started) {
+    refs.discovery_status->setText("Server not started");
+  }
 }
 
 std::unique_ptr<AppService> start_service(const HandheldAppConfig& app_config, RuntimeState& state) {
@@ -129,10 +150,12 @@ std::unique_ptr<AppService> start_service(const HandheldAppConfig& app_config, R
     state.server_port = service->status().port;
     state.server_status = "Started";
     log_line("Receive server started on port " + std::to_string(state.server_port));
-    if (service->announce_once()) {
-      log_line("Discovery announcement sent");
-    } else {
-      log_line("Discovery announcement failed");
+    if (app_config.platform != PlatformKind::Switch) {
+      if (service->announce_once()) {
+        log_line("Discovery announcement sent");
+      } else {
+        log_line("Discovery announcement failed");
+      }
     }
   } else {
     state.server_status = "Failed to start";
@@ -158,6 +181,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
   brls::Platform::APP_LOCALE_DEFAULT = brls::LOCALE_AUTO;
   log_line("LocalSend Handheld boot");
 
+  log_line("Calling borealis init");
   if (!brls::Application::init()) {
     log_line("borealis init failed");
     if (g_log) {
@@ -166,10 +190,13 @@ int run_handheld_app(const HandheldAppConfig& config) {
     }
     return EXIT_FAILURE;
   }
+  log_line("borealis init ok");
 
+  log_line("Creating borealis window");
   brls::Application::createWindow("LocalSend Handheld");
+  log_line("borealis window created");
   brls::Application::getPlatform()->setThemeVariant(brls::ThemeVariant::DARK);
-  brls::Application::setGlobalQuit(true);
+  brls::Application::setGlobalQuit(false);
 
   RuntimeState state;
   state.server_port = config.port;
@@ -177,28 +204,83 @@ int run_handheld_app(const HandheldAppConfig& config) {
   log_line("Detected IP: " + state.ip);
 
   std::unique_ptr<AppService> service;
-  try {
-    service = start_service(config, state);
-  } catch (const std::exception& e) {
-    state.server_status = std::string("Exception: ") + e.what();
-    log_line(state.server_status);
-  } catch (...) {
-    state.server_status = "Unknown exception";
-    log_line(state.server_status);
+  const bool auto_start_service = config.platform != PlatformKind::Switch;
+  if (auto_start_service) {
+    try {
+      service = start_service(config, state);
+    } catch (const std::exception& e) {
+      state.server_status = std::string("Exception: ") + e.what();
+      log_line(state.server_status);
+    } catch (...) {
+      state.server_status = "Unknown exception";
+      log_line(state.server_status);
+    }
+  } else {
+    log_line("Switch startup: receive server deferred until BUTTON_A");
   }
 
-  auto* frame = new brls::AppletFrame(make_panel(config, state));
+  PanelRefs refs;
+  auto* panel = make_panel(config, state, refs);
+  refresh_panel(state, refs);
+
+  panel->registerAction("Start", brls::BUTTON_A, [&](brls::View*) {
+    if (service && state.server_started) {
+      log_line("Start requested; receive server already running");
+      return true;
+    }
+    try {
+      service = start_service(config, state);
+    } catch (const std::exception& e) {
+      state.server_status = std::string("Exception: ") + e.what();
+      log_line(state.server_status);
+    } catch (...) {
+      state.server_status = "Unknown exception";
+      log_line(state.server_status);
+    }
+    refresh_panel(state, refs);
+    return true;
+  });
+
+  panel->registerAction("Announce", brls::BUTTON_X, [&](brls::View*) {
+    if (!service || !state.server_started) {
+      log_line("Manual discovery announcement skipped; server not started");
+      if (refs.discovery_status) {
+        refs.discovery_status->setText("Server not started");
+      }
+      return true;
+    }
+    const bool ok = service->announce_once();
+    log_line(ok ? "Manual discovery announcement sent" : "Manual discovery announcement failed");
+    if (refs.discovery_status) {
+      refs.discovery_status->setText(ok ? "Last announce sent" : "Last announce failed");
+    }
+    return true;
+  });
+
+  auto* frame = new brls::AppletFrame(panel);
   frame->setTitle("LocalSend Handheld");
+  log_line("Pushing activity");
   brls::Application::pushActivity(new brls::Activity(frame));
+  log_line("Activity pushed; entering main loop");
 
   auto next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  int loop_count = 0;
   while (brls::Application::mainLoop()) {
+    if (++loop_count == 1) {
+      log_line("mainLoop first frame ok");
+    } else if (loop_count % 600 == 0) {
+      log_line("mainLoop alive");
+    }
     if (service && state.server_started && config.enable_discovery &&
         std::chrono::steady_clock::now() >= next_announce) {
-      service->announce_once();
+      const bool ok = service->announce_once();
+      if (refs.discovery_status) {
+        refs.discovery_status->setText(ok ? "Periodic announce sent" : "Periodic announce failed");
+      }
       next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     }
   }
+  log_line("mainLoop exited");
 
   service.reset();
   if (g_log) {

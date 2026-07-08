@@ -11,7 +11,8 @@
 #define GLYPH_WIDTH 5
 #define GLYPH_HEIGHT 7
 
-static uint32_t framebuffer[FB_WIDTH * FB_HEIGHT];
+static uint32_t framebuffers[2][FB_WIDTH * FB_HEIGHT] __attribute__((aligned(256)));
+static uint32_t* framebuffer = framebuffers[0];
 
 static uint32_t rgb(uint8_t r, uint8_t g, uint8_t b) {
   return 0xff000000u | ((uint32_t)b << 16) | ((uint32_t)g << 8) | r;
@@ -119,6 +120,7 @@ static void draw_text(int x, int y, const char* text, uint32_t color, int scale)
 }
 
 static void render_screen(int frames) {
+  framebuffer = framebuffers[frames & 1];
   const uint32_t background = rgb(13, 18, 32);
   const uint32_t panel = rgb(24, 36, 56);
   const uint32_t accent = rgb(29, 185, 140);
@@ -149,7 +151,7 @@ static void render_screen(int frames) {
   fb.pixelformat = SCE_DISPLAY_PIXELFORMAT_A8B8G8R8;
   fb.width = FB_WIDTH;
   fb.height = FB_HEIGHT;
-  sceDisplaySetFrameBuf(&fb, SCE_DISPLAY_SETBUF_NEXTFRAME);
+  sceDisplaySetFrameBuf(&fb, SCE_DISPLAY_SETBUF_IMMEDIATE);
 }
 
 int main(void) {
@@ -162,9 +164,8 @@ int main(void) {
     if (pad.buttons & SCE_CTRL_START) {
       break;
     }
-    render_screen(frames++);
     sceDisplayWaitVblankStart();
-    sceKernelDelayThread(1000);
+    render_screen(frames++);
   }
 
   sceKernelExitProcess(0);

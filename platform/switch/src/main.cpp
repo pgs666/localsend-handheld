@@ -489,6 +489,66 @@ std::string read_body_string(int fd, std::string body, size_t length) {
   return body;
 }
 
+bool read_chunked_body_string(int fd, const std::string& initial_body, std::string& body) {
+  std::string buffer = initial_body;
+  size_t pos = 0;
+  body.clear();
+
+  auto fill = [&](size_t need) {
+    char chunk[4096];
+    while (buffer.size() - pos < need) {
+      const ssize_t got = recv_retry(fd, chunk, sizeof(chunk));
+      if (got <= 0) {
+        return false;
+      }
+      buffer.append(chunk, static_cast<size_t>(got));
+    }
+    return true;
+  };
+
+  while (true) {
+    size_t line_end = buffer.find("\r\n", pos);
+    while (line_end == std::string::npos) {
+      if (!fill(buffer.size() - pos + 1)) {
+        return false;
+      }
+      line_end = buffer.find("\r\n", pos);
+    }
+
+    std::string size_text = buffer.substr(pos, line_end - pos);
+    const size_t semicolon = size_text.find(';');
+    if (semicolon != std::string::npos) {
+      size_text.resize(semicolon);
+    }
+
+    char* end = nullptr;
+    const size_t chunk_size = static_cast<size_t>(std::strtoull(size_text.c_str(), &end, 16));
+    if (end == size_text.c_str()) {
+      return false;
+    }
+
+    pos = line_end + 2;
+    if (chunk_size == 0) {
+      return true;
+    }
+
+    if (!fill(chunk_size + 2)) {
+      return false;
+    }
+    body.append(buffer.data() + pos, chunk_size);
+    pos += chunk_size;
+    if (pos + 1 >= buffer.size() || buffer[pos] != '\r' || buffer[pos + 1] != '\n') {
+      return false;
+    }
+    pos += 2;
+
+    if (pos > 64 * 1024) {
+      buffer.erase(0, pos);
+      pos = 0;
+    }
+  }
+}
+
 ClientHttpResult read_client_response(int fd) {
   ClientHttpResult result;
   std::string headers;
@@ -497,7 +557,13 @@ ClientHttpResult read_client_response(int fd) {
     return result;
   }
   result.status = status_code_from_headers(headers);
-  result.body = read_body_string(fd, initial_body, content_length(headers));
+  if (transfer_encoding_chunked(headers)) {
+    if (!read_chunked_body_string(fd, initial_body, result.body)) {
+      result.body.clear();
+    }
+  } else {
+    result.body = read_body_string(fd, initial_body, content_length(headers));
+  }
   return result;
 }
 

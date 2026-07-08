@@ -9,7 +9,14 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 #include <vector>
+
+#include <arpa/inet.h>
+#include <cstring>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 namespace {
 
@@ -413,6 +420,51 @@ void test_http_server_chunked_upload() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_client_chunked_response() {
+  const int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(listen_fd >= 0, "chunked response listen socket failed");
+
+  int enabled = 1;
+  ::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  require(::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "chunked response bind failed");
+  require(::listen(listen_fd, 1) == 0, "chunked response listen failed");
+
+  socklen_t len = sizeof(addr);
+  require(::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0, "chunked response getsockname failed");
+  const int port = ntohs(addr.sin_port);
+
+  std::thread server([listen_fd]() {
+    const int client = ::accept(listen_fd, nullptr, nullptr);
+    if (client >= 0) {
+      char discard[1024];
+      static_cast<void>(::recv(client, discard, sizeof(discard), 0));
+      const char* response =
+          "HTTP/1.1 200 OK\r\n"
+          "Content-Type: application/json\r\n"
+          "Transfer-Encoding: chunked\r\n"
+          "Connection: close\r\n\r\n"
+          "6\r\n{\"ok\":\r\n"
+          "4\r\ntrue\r\n"
+          "1\r\n}\r\n"
+          "0\r\n\r\n";
+      static_cast<void>(::send(client, response, std::strlen(response), 0));
+      ::close(client);
+    }
+    ::close(listen_fd);
+  });
+
+  const auto response = localsend::http_get("127.0.0.1", port, "/chunked");
+  server.join();
+
+  require(response.status == 200, "chunked response status failed");
+  require(response.body == R"({"ok":true})", "chunked response body failed");
+}
+
 } // namespace
 
 int main() {
@@ -433,6 +485,7 @@ int main() {
     test_http_send_to_v1_target();
     test_http_prepare_uses_file_id();
     test_http_server_chunked_upload();
+    test_http_client_chunked_response();
   } catch (const std::exception& e) {
     std::cerr << "test failed: " << e.what() << '\n';
     return 1;

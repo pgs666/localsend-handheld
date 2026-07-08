@@ -318,6 +318,16 @@ bool read_chunked_body_to_stream(int fd, const std::string& initial_body, std::o
   }
 }
 
+bool read_chunked_body_to_string(int fd, const std::string& initial_body, std::string& body) {
+  std::ostringstream out;
+  std::size_t written = 0;
+  if (!read_chunked_body_to_stream(fd, initial_body, out, written)) {
+    return false;
+  }
+  body = out.str();
+  return true;
+}
+
 bool parse_response(int fd, HttpResult& result) {
   std::string buffer;
   if (!recv_until_headers(fd, buffer)) {
@@ -330,6 +340,9 @@ bool parse_response(int fd, HttpResult& result) {
   std::string discard;
   std::getline(stream, discard);
   const auto headers = parse_headers(stream);
+  if (transfer_encoding_chunked(headers)) {
+    return read_chunked_body_to_string(fd, buffer.substr(header_end), result.body);
+  }
   return read_body(fd, buffer, header_end, content_length(headers), result.body);
 }
 

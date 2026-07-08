@@ -284,12 +284,80 @@ std::string format_send_target_log(const DeviceEntry& selected) {
   return text;
 }
 
-void refresh_service_snapshot(AppService& service, RuntimeState& state, const PanelRefs& refs) {
-  const AppSnapshot snapshot = service.snapshot();
-  if (!selected_online_device(snapshot.devices, state.selected_device_index)) {
-    state.selected_device_index = first_online_device_index(snapshot.devices);
+bool can_send_to_device(const DeviceEntry& entry, const HandheldAppConfig& app_config) {
+  return entry.online && (!entry.device.https || app_config.enable_tls);
+}
+
+std::optional<std::size_t> first_sendable_device_index(const std::vector<DeviceEntry>& devices,
+                                                       const HandheldAppConfig& app_config) {
+  for (std::size_t i = 0; i < devices.size(); ++i) {
+    if (can_send_to_device(devices[i], app_config)) {
+      return i;
+    }
   }
-  state.selected_peer_status = format_selected_device(snapshot.devices, state.selected_device_index);
+  return std::nullopt;
+}
+
+std::optional<std::size_t> next_sendable_device_index(const std::vector<DeviceEntry>& devices,
+                                                      std::optional<std::size_t> current_index,
+                                                      const HandheldAppConfig& app_config) {
+  if (devices.empty()) {
+    return std::nullopt;
+  }
+
+  const std::size_t start = current_index && *current_index < devices.size() ? (*current_index + 1) : 0;
+  for (std::size_t offset = 0; offset < devices.size(); ++offset) {
+    const std::size_t index = (start + offset) % devices.size();
+    if (can_send_to_device(devices[index], app_config)) {
+      return index;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<DeviceEntry> selected_sendable_device(const std::vector<DeviceEntry>& devices,
+                                                    std::optional<std::size_t> current_index,
+                                                    const HandheldAppConfig& app_config) {
+  if (current_index && *current_index < devices.size() && can_send_to_device(devices[*current_index], app_config)) {
+    return devices[*current_index];
+  }
+
+  const auto fallback = first_sendable_device_index(devices, app_config);
+  if (!fallback) {
+    return std::nullopt;
+  }
+  return devices[*fallback];
+}
+
+std::string format_selected_sendable_device(const std::vector<DeviceEntry>& devices,
+                                            std::optional<std::size_t> current_index,
+                                            const HandheldAppConfig& app_config) {
+  const auto selected = selected_sendable_device(devices, current_index, app_config);
+  if (selected) {
+    return format_selected_device(devices, current_index);
+  }
+
+  std::size_t online_https = 0;
+  for (const auto& entry : devices) {
+    if (entry.online && entry.device.https) {
+      ++online_https;
+    }
+  }
+  if (!app_config.enable_tls && online_https > 0) {
+    return "No HTTP peer selected; disable Encryption on peer";
+  }
+  return "No online peer selected";
+}
+
+void refresh_service_snapshot(AppService& service,
+                              const HandheldAppConfig& app_config,
+                              RuntimeState& state,
+                              const PanelRefs& refs) {
+  const AppSnapshot snapshot = service.snapshot();
+  if (!selected_sendable_device(snapshot.devices, state.selected_device_index, app_config)) {
+    state.selected_device_index = first_sendable_device_index(snapshot.devices, app_config);
+  }
+  state.selected_peer_status = format_selected_sendable_device(snapshot.devices, state.selected_device_index, app_config);
   if (refs.selected_peer) {
     refs.selected_peer->setText(state.selected_peer_status);
   }
@@ -436,11 +504,11 @@ int run_handheld_app(const HandheldAppConfig& config) {
     }
 
     const AppSnapshot snapshot = service->snapshot();
-    const auto selected = selected_online_device(snapshot.devices, state.selected_device_index);
+    const auto selected = selected_sendable_device(snapshot.devices, state.selected_device_index, config);
     if (!selected) {
-      state.send_status = "No online peer selected";
+      state.send_status = format_selected_sendable_device(snapshot.devices, state.selected_device_index, config);
       refresh_send_status(state.send_status, refs);
-      log_line("Send action rejected: no online peer");
+      log_line("Send action rejected: " + state.send_status);
       return true;
     }
 
@@ -473,11 +541,11 @@ int run_handheld_app(const HandheldAppConfig& config) {
     }
 
     const AppSnapshot snapshot = service->snapshot();
-    const auto selected = selected_online_device(snapshot.devices, state.selected_device_index);
+    const auto selected = selected_sendable_device(snapshot.devices, state.selected_device_index, config);
     if (!selected) {
-      state.send_status = "No online peer selected";
+      state.send_status = format_selected_sendable_device(snapshot.devices, state.selected_device_index, config);
       refresh_send_status(state.send_status, refs);
-      log_line("Send all rejected: no online peer");
+      log_line("Send all rejected: " + state.send_status);
       return true;
     }
 
@@ -503,9 +571,15 @@ int run_handheld_app(const HandheldAppConfig& config) {
   });
   frame->registerAction(action_label("Cancel send", keys.cancel), brls::BUTTON_B, [&](brls::View*) {
     if (!service) {
-      state.send_status = "Receive server not ready";
-      refresh_send_status(state.send_status, refs);
-      log_line("Cancel send rejected: service not ready");
+      log_line("Back pressed while service not ready; opening exit prompt");
+      frame->popContentView();
+      return true;
+    }
+
+    const AppSnapshot snapshot = service->snapshot();
+    if (!snapshot.status.send_running) {
+      log_line("Back pressed while idle; opening exit prompt");
+      frame->popContentView();
       return true;
     }
 
@@ -530,8 +604,8 @@ int run_handheld_app(const HandheldAppConfig& config) {
     }
 
     const AppSnapshot snapshot = service->snapshot();
-    state.selected_device_index = next_online_device_index(snapshot.devices, state.selected_device_index);
-    state.selected_peer_status = format_selected_device(snapshot.devices, state.selected_device_index);
+    state.selected_device_index = next_sendable_device_index(snapshot.devices, state.selected_device_index, config);
+    state.selected_peer_status = format_selected_sendable_device(snapshot.devices, state.selected_device_index, config);
     if (refs.selected_peer) {
       refs.selected_peer->setText(state.selected_peer_status);
     }
@@ -553,11 +627,11 @@ int run_handheld_app(const HandheldAppConfig& config) {
     }
 
     const AppSnapshot snapshot = service->snapshot();
-    const auto selected = selected_online_device(snapshot.devices, state.selected_device_index);
+    const auto selected = selected_sendable_device(snapshot.devices, state.selected_device_index, config);
     if (!selected) {
-      state.send_status = "No online peer selected";
+      state.send_status = format_selected_sendable_device(snapshot.devices, state.selected_device_index, config);
       refresh_send_status(state.send_status, refs);
-      log_line("Save peer rejected: no online peer");
+      log_line("Save peer rejected: " + state.send_status);
       return true;
     }
 
@@ -575,7 +649,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
       log_line("Save peer failed target=" + format_send_target_log(*selected) + " key=" + key);
     }
     refresh_send_status(state.send_status, refs);
-    refresh_service_snapshot(*service, state, refs);
+    refresh_service_snapshot(*service, config, state, refs);
     return true;
   });
   frame->registerAction(action_label("Remove peer", keys.remove_peer), brls::BUTTON_BACK, [&](brls::View*) {
@@ -587,11 +661,11 @@ int run_handheld_app(const HandheldAppConfig& config) {
     }
 
     const AppSnapshot snapshot = service->snapshot();
-    const auto selected = selected_online_device(snapshot.devices, state.selected_device_index);
+    const auto selected = selected_sendable_device(snapshot.devices, state.selected_device_index, config);
     if (!selected) {
-      state.send_status = "No online peer selected";
+      state.send_status = format_selected_sendable_device(snapshot.devices, state.selected_device_index, config);
       refresh_send_status(state.send_status, refs);
-      log_line("Remove peer rejected: no online peer");
+      log_line("Remove peer rejected: " + state.send_status);
       return true;
     }
     if (selected->source != DeviceSource::Manual) {
@@ -618,7 +692,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
     }
     state.selected_device_index = std::nullopt;
     refresh_send_status(state.send_status, refs);
-    refresh_service_snapshot(*service, state, refs);
+    refresh_service_snapshot(*service, config, state, refs);
     return true;
   });
   log_line("Using AppletFrame bottom-bar shell");
@@ -665,7 +739,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
     }
 
     if (service && std::chrono::steady_clock::now() >= next_snapshot_refresh) {
-      refresh_service_snapshot(*service, state, refs);
+      refresh_service_snapshot(*service, config, state, refs);
       next_snapshot_refresh = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     }
   }

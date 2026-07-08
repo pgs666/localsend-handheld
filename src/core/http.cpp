@@ -442,6 +442,19 @@ bool response_version_is_legacy_v1(const std::string& body) {
   }
 }
 
+bool fingerprint_matches(std::string actual, std::string expected) {
+  if (expected.empty()) {
+    return true;
+  }
+  std::transform(actual.begin(), actual.end(), actual.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  std::transform(expected.begin(), expected.end(), expected.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return actual == expected;
+}
+
 bool debug_send_enabled() {
   const char* value = std::getenv("LOCALSEND_DEBUG_SEND");
   return value && std::string(value) == "1";
@@ -460,7 +473,8 @@ HttpResult request_raw(const std::string& host,
                        const std::string& body,
                        const std::string& content_type,
                        bool use_tls = false,
-                       const std::string& expected_fingerprint = "");
+                       const std::string& expected_fingerprint = "",
+                       const TlsCredentials* client_credentials = nullptr);
 
 bool target_uses_v2_api(const Device& target) {
   if (target.version == "1.0") {
@@ -571,9 +585,17 @@ int connect_tcp(const std::string& host, int port) {
   return fd;
 }
 
-std::unique_ptr<HttpStream> connect_http_stream(const std::string& host, int port, bool use_tls, const std::string& expected_fingerprint) {
+std::unique_ptr<HttpStream> connect_http_stream(const std::string& host,
+                                                int port,
+                                                bool use_tls,
+                                                const std::string& expected_fingerprint,
+                                                const TlsCredentials* client_credentials,
+                                                std::string* error) {
   int fd = connect_tcp(host, port);
   if (fd < 0) {
+    if (error) {
+      *error = "TCP connect failed";
+    }
     return nullptr;
   }
   if (!use_tls) {
@@ -582,22 +604,34 @@ std::unique_ptr<HttpStream> connect_http_stream(const std::string& host, int por
 
 #if LOCALSEND_HAS_MBEDTLS
   try {
-    auto tls = TlsConnection::client(fd);
+    auto tls = TlsConnection::client(fd, client_credentials);
     if (!tls.handshake()) {
+      if (error) {
+        *error = "TLS handshake failed";
+      }
       close_fd(fd);
       return nullptr;
     }
     const std::string actual_fingerprint = tls.peer_fingerprint();
-    if (!expected_fingerprint.empty() && actual_fingerprint != expected_fingerprint) {
+    if (!fingerprint_matches(actual_fingerprint, expected_fingerprint)) {
+      if (error) {
+        *error = "TLS fingerprint mismatch actual=" + actual_fingerprint + " expected=" + expected_fingerprint;
+      }
       tls.close_notify();
       return nullptr;
     }
     return std::make_unique<TlsStream>(std::move(tls));
-  } catch (const std::exception&) {
+  } catch (const std::exception& e) {
+    if (error) {
+      *error = std::string("TLS setup failed: ") + e.what();
+    }
     close_fd(fd);
     return nullptr;
   }
 #else
+  if (error) {
+    *error = "TLS support is not compiled in";
+  }
   close_fd(fd);
   return nullptr;
 #endif
@@ -610,9 +644,10 @@ HttpResult request_raw(const std::string& host,
                        const std::string& body,
                        const std::string& content_type,
                        bool use_tls,
-                       const std::string& expected_fingerprint) {
+                       const std::string& expected_fingerprint,
+                       const TlsCredentials* client_credentials) {
   HttpResult result;
-  auto stream = connect_http_stream(host, port, use_tls, expected_fingerprint);
+  auto stream = connect_http_stream(host, port, use_tls, expected_fingerprint, client_credentials, &result.error);
   if (!stream) {
     return result;
   }
@@ -629,7 +664,11 @@ HttpResult request_raw(const std::string& host,
 
   const std::string text = request.str();
   if (stream->write_all(text.data(), text.size())) {
-    parse_response(*stream, result);
+    if (!parse_response(*stream, result)) {
+      result.error = "HTTP response read failed";
+    }
+  } else {
+    result.error = "HTTP request write failed";
   }
   stream->close_notify();
   return result;
@@ -643,10 +682,11 @@ HttpResult post_file_raw(const std::string& host,
                          const std::string& content_type,
                          bool use_tls = false,
                          const std::string& expected_fingerprint = "",
+                         const TlsCredentials* client_credentials = nullptr,
                          const std::function<void(std::uint64_t)>& progress = nullptr,
                          const std::function<bool()>& should_cancel = nullptr) {
   HttpResult result;
-  auto stream = connect_http_stream(host, port, use_tls, expected_fingerprint);
+  auto stream = connect_http_stream(host, port, use_tls, expected_fingerprint, client_credentials, &result.error);
   if (!stream) {
     return result;
   }
@@ -679,9 +719,13 @@ HttpResult post_file_raw(const std::string& host,
     }
   }
   if (ok && !(should_cancel && should_cancel())) {
-    parse_response(*stream, result);
+    if (!parse_response(*stream, result)) {
+      result.error = "HTTP upload response read failed";
+    }
   } else if (should_cancel && should_cancel()) {
     result.body = "cancelled";
+  } else {
+    result.error = "HTTP upload write failed";
   }
   stream->close_notify();
   return result;
@@ -695,7 +739,7 @@ HttpResult post_chunked_raw(const std::string& host,
                             bool use_tls = false,
                             const std::string& expected_fingerprint = "") {
   HttpResult result;
-  auto stream = connect_http_stream(host, port, use_tls, expected_fingerprint);
+  auto stream = connect_http_stream(host, port, use_tls, expected_fingerprint, nullptr, &result.error);
   if (!stream) {
     return result;
   }
@@ -1230,7 +1274,8 @@ SendFilesResult send_files_http_detailed(const Device& target,
                                          const std::vector<std::filesystem::path>& file_paths,
                                          const InfoRegisterDto& self,
                                          TransferStore* transfers,
-                                         SendFilesControl* control) {
+                                         SendFilesControl* control,
+                                         const TlsCredentials* client_credentials) {
   auto result_error = [](std::string message) {
     SendFilesResult result;
     result.ok = false;
@@ -1263,6 +1308,9 @@ SendFilesResult send_files_http_detailed(const Device& target,
     return body;
   };
   auto http_failure_detail = [&compact_body](const HttpResult& response) {
+    if (!response.error.empty()) {
+      return response.error;
+    }
     if (response.status == 0 && response.body.empty()) {
       return std::string("connection failed or no response");
     }
@@ -1296,7 +1344,7 @@ SendFilesResult send_files_http_detailed(const Device& target,
   }
 
   const Device send_target = resolve_send_target(target);
-  auto send_cancel = [&send_target](const std::string& session_id, bool v2) {
+  auto send_cancel = [&send_target, client_credentials](const std::string& session_id, bool v2) {
     if (!v2 || session_id.empty()) {
       return;
     }
@@ -1308,7 +1356,8 @@ SendFilesResult send_files_http_detailed(const Device& target,
                                   "",
                                   "application/json",
                                   send_target.https,
-                                  send_target.fingerprint));
+                                  send_target.fingerprint,
+                                  client_credentials));
   };
 
   std::vector<FileDto> files;
@@ -1360,7 +1409,8 @@ SendFilesResult send_files_http_detailed(const Device& target,
                                           to_json(request).dump(),
                                           "application/json",
                                           send_target.https,
-                                          send_target.fingerprint);
+                                          send_target.fingerprint,
+                                          client_credentials);
   debug_send_line("prepare status=" + std::to_string(prepared.status) + " body=" + prepared.body);
   if (cancel_requested()) {
     cancel_transfers(transfer_ids);
@@ -1449,6 +1499,7 @@ SendFilesResult send_files_http_detailed(const Device& target,
                                               file.file_type,
                                               send_target.https,
                                               send_target.fingerprint,
+                                              client_credentials,
                                               [transfers, transfer_id](std::uint64_t bytes) {
                                                 if (transfers && transfer_id != 0) {
                                                   transfers->set_progress(transfer_id, bytes);

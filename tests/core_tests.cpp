@@ -13,6 +13,8 @@
 #include "localsend/tls.hpp"
 #include "localsend/transfer.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -1185,6 +1187,10 @@ void test_https_server_routes_and_upload() {
   std::filesystem::create_directories(inbox_dir);
 
   const std::string fingerprint = localsend::certificate_fingerprint_from_pem(test_tls_certificate());
+  std::string uppercase_fingerprint = fingerprint;
+  std::transform(uppercase_fingerprint.begin(), uppercase_fingerprint.end(), uppercase_fingerprint.begin(), [](unsigned char c) {
+    return static_cast<char>(std::toupper(c));
+  });
 
   localsend::InfoRegisterDto self;
   self.alias = "Secure Receiver";
@@ -1195,7 +1201,7 @@ void test_https_server_routes_and_upload() {
   localsend::LocalSendServer server(self, inbox_dir, {test_tls_certificate(), test_tls_private_key()});
   require(server.start(0), "HTTPS server failed to start");
 
-  const auto info = localsend::https_get("127.0.0.1", server.port(), localsend::kRouteInfo, fingerprint);
+  const auto info = localsend::https_get("127.0.0.1", server.port(), localsend::kRouteInfo, uppercase_fingerprint);
   require(info.status == 200, "HTTPS info route failed");
   const auto info_json = localsend::Json::parse(info.body);
   const auto decoded_info = localsend::info_from_json(info_json);
@@ -1214,7 +1220,7 @@ void test_https_server_routes_and_upload() {
   target.version = localsend::kProtocolVersion;
   target.port = server.port();
   target.https = true;
-  target.fingerprint = fingerprint;
+  target.fingerprint = uppercase_fingerprint;
 
   localsend::InfoRegisterDto sender;
   sender.alias = "Secure Sender";

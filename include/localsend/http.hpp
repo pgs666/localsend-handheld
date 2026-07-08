@@ -41,6 +41,7 @@ struct HttpResponse {
 struct HttpResult {
   int status = 0;
   std::string body;
+  std::string error;
 };
 
 struct SendFilesResult {
@@ -146,6 +147,7 @@ SendFilesResult send_files_http_detailed(const Device& target,
                                          const std::vector<std::filesystem::path>& file_paths,
                                          const InfoRegisterDto& self,
                                          TransferStore* transfers,
-                                         SendFilesControl* control = nullptr);
+                                         SendFilesControl* control = nullptr,
+                                         const TlsCredentials* client_credentials = nullptr);
 
 } // namespace localsend

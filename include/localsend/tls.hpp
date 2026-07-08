@@ -22,7 +22,7 @@ public:
   TlsConnection(const TlsConnection&) = delete;
   TlsConnection& operator=(const TlsConnection&) = delete;
 
-  static TlsConnection client(int fd);
+  static TlsConnection client(int fd, const TlsCredentials* credentials = nullptr);
   static TlsConnection server(int fd, const TlsCredentials& credentials);
 
   bool handshake();

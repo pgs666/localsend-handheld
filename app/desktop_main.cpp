@@ -3,9 +3,11 @@
 #include "localsend/discovery.hpp"
 #include "localsend/http.hpp"
 #include "localsend/protocol.hpp"
+#include "localsend/security.hpp"
 
 #include <filesystem>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -16,16 +18,19 @@ void print_usage(const char* argv0) {
             << "  " << argv0 << " info [alias]\n"
             << "  " << argv0 << " config [path]\n"
             << "  " << argv0 << " serve [inbox] [port] [alias]\n"
-            << "  " << argv0 << " send <ip> <port> <file...> [--alias name]\n"
+            << "  " << argv0 << " send <ip> <port> <file...> [--alias name] [--https] [--fingerprint sha256]\n"
             << "  " << argv0 << " discover [milliseconds]\n";
 }
 
-localsend::InfoRegisterDto make_self(const std::string& alias, int port = localsend::kDefaultPort) {
+localsend::InfoRegisterDto make_self(const std::string& alias,
+                                     int port = localsend::kDefaultPort,
+                                     bool https = false,
+                                     const std::string& fingerprint = "") {
   localsend::InfoRegisterDto self;
   self.alias = alias;
   self.port = port;
-  self.protocol = localsend::ProtocolType::Http;
-  self.fingerprint = "";
+  self.protocol = https ? localsend::ProtocolType::Https : localsend::ProtocolType::Http;
+  self.fingerprint = fingerprint;
   self.device_model = "Desktop prototype";
   self.device_type = localsend::DeviceType::Desktop;
   self.download = false;
@@ -89,11 +94,16 @@ int command_send(int argc, char** argv) {
   target.https = false;
 
   std::string alias = "LocalSend Handheld Desktop";
+  std::string expected_fingerprint;
   std::vector<std::filesystem::path> files;
   for (int i = 4; i < argc; ++i) {
     const std::string arg = argv[i];
     if (arg == "--alias" && i + 1 < argc) {
       alias = argv[++i];
+    } else if (arg == "--https") {
+      target.https = true;
+    } else if (arg == "--fingerprint" && i + 1 < argc) {
+      expected_fingerprint = argv[++i];
     } else {
       files.emplace_back(arg);
     }
@@ -103,8 +113,25 @@ int command_send(int argc, char** argv) {
     return 1;
   }
 
-  if (!localsend::send_files_http(target, files, make_self(alias))) {
-    std::cerr << "send failed\n";
+  std::optional<localsend::TlsIdentity> identity;
+  std::optional<localsend::TlsCredentials> credentials;
+  localsend::InfoRegisterDto self = make_self(alias);
+  if (target.https) {
+    const auto defaults = localsend::default_config(localsend::PlatformKind::Desktop);
+    identity = localsend::load_or_create_tls_identity(defaults.certificate_path, defaults.private_key_path);
+    credentials = localsend::TlsCredentials{identity->certificate_pem, identity->private_key_pem};
+    self = make_self(alias, localsend::kDefaultPort, true, identity->fingerprint);
+    target.fingerprint = expected_fingerprint;
+  }
+
+  const localsend::SendFilesResult result = localsend::send_files_http_detailed(target,
+                                                                                files,
+                                                                                self,
+                                                                                nullptr,
+                                                                                nullptr,
+                                                                                credentials ? &*credentials : nullptr);
+  if (!result.ok) {
+    std::cerr << (result.error.empty() ? "send failed" : result.error) << '\n';
     return 1;
   }
   std::cout << "sent " << files.size() << " file(s) to " << target.ip << ':' << target.port << '\n';

@@ -446,7 +446,24 @@ void AppService::discovery_loop(std::chrono::milliseconds interval, std::chrono:
 }
 
 void AppService::send_worker(Device device, std::vector<std::filesystem::path> file_paths) {
-  const SendFilesResult result = send_files_http_detailed(device, file_paths, self_, &transfers_, &send_control_);
+  std::optional<TlsIdentity> identity;
+  std::optional<TlsCredentials> client_credentials;
+  if (device.https) {
+    try {
+      identity = load_or_create_tls_identity(config_.certificate_path, config_.private_key_path);
+      client_credentials = TlsCredentials{identity->certificate_pem, identity->private_key_pem};
+    } catch (const std::exception& e) {
+      set_last_send_error(std::string("failed to load HTTPS identity: ") + e.what());
+      send_running_ = false;
+      return;
+    }
+  }
+  const SendFilesResult result = send_files_http_detailed(device,
+                                                          file_paths,
+                                                          self_,
+                                                          &transfers_,
+                                                          &send_control_,
+                                                          client_credentials ? &*client_credentials : nullptr);
   set_last_send_error(result.ok ? "" : result.error);
   send_running_ = false;
 }

@@ -100,7 +100,7 @@ TlsConnection::~TlsConnection() = default;
 TlsConnection::TlsConnection(TlsConnection&&) noexcept = default;
 TlsConnection& TlsConnection::operator=(TlsConnection&&) noexcept = default;
 
-TlsConnection TlsConnection::client(int fd) {
+TlsConnection TlsConnection::client(int fd, const TlsCredentials* credentials) {
   auto impl = std::make_unique<Impl>();
   impl->fd = fd;
 
@@ -118,6 +118,36 @@ TlsConnection TlsConnection::client(int fd) {
   }
   mbedtls_ssl_conf_authmode(&impl->config, MBEDTLS_SSL_VERIFY_NONE);
   mbedtls_ssl_conf_rng(&impl->config, mbedtls_ctr_drbg_random, &impl->ctr_drbg);
+
+  if (credentials) {
+    if (mbedtls_x509_crt_parse(&impl->certificate,
+                               reinterpret_cast<const unsigned char*>(credentials->certificate_pem.c_str()),
+                               credentials->certificate_pem.size() + 1) != 0) {
+      throw std::runtime_error("mbedTLS client certificate parse failed");
+    }
+    const unsigned char* key_data = reinterpret_cast<const unsigned char*>(credentials->private_key_pem.c_str());
+    const std::size_t key_size = credentials->private_key_pem.size() + 1;
+#if MBEDTLS_VERSION_NUMBER >= 0x03000000
+    if (mbedtls_pk_parse_key(&impl->private_key,
+                             key_data,
+                             key_size,
+                             nullptr,
+                             0,
+                             mbedtls_ctr_drbg_random,
+                             &impl->ctr_drbg) != 0) {
+#else
+    if (mbedtls_pk_parse_key(&impl->private_key,
+                             key_data,
+                             key_size,
+                             nullptr,
+                             0) != 0) {
+#endif
+      throw std::runtime_error("mbedTLS client private key parse failed");
+    }
+    if (mbedtls_ssl_conf_own_cert(&impl->config, &impl->certificate, &impl->private_key) != 0) {
+      throw std::runtime_error("mbedTLS client certificate config failed");
+    }
+  }
 
   if (mbedtls_ssl_setup(&impl->ssl, &impl->config) != 0) {
     throw std::runtime_error("mbedTLS client setup failed");

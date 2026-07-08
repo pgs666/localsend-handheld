@@ -290,6 +290,45 @@ void test_http_v1_legacy_routes() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_send_to_v1_target() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-send-v1-tests";
+  const auto source_dir = dir / "source";
+  const auto inbox_dir = dir / "inbox";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(source_dir);
+  std::filesystem::create_directories(inbox_dir);
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Receiver";
+  self.protocol = localsend::ProtocolType::Http;
+
+  localsend::LocalSendServer server(self, inbox_dir);
+  require(server.start(0), "server failed to start for v1 send target test");
+
+  const auto source = source_dir / "legacy-target.txt";
+  {
+    std::ofstream out(source, std::ios::binary);
+    out << "legacy target";
+  }
+
+  localsend::Device target;
+  target.ip = "127.0.0.1";
+  target.version = "1.0";
+  target.port = server.port();
+  target.https = false;
+
+  localsend::InfoRegisterDto sender;
+  sender.alias = "Sender";
+  sender.port = 12345;
+  sender.protocol = localsend::ProtocolType::Http;
+
+  require(localsend::send_single_file_http(target, source, sender), "send to v1 target failed");
+  require(std::filesystem::exists(inbox_dir / "legacy-target.txt"), "v1 target uploaded file missing");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
 void test_http_prepare_uses_file_id() {
   const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-id-tests";
   std::filesystem::remove_all(dir);
@@ -391,6 +430,7 @@ int main() {
     test_http_server_routes_and_upload();
     test_http_send_multiple_files();
     test_http_v1_legacy_routes();
+    test_http_send_to_v1_target();
     test_http_prepare_uses_file_id();
     test_http_server_chunked_upload();
   } catch (const std::exception& e) {

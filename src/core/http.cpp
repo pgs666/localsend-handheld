@@ -793,14 +793,23 @@ bool send_files_http(const Device& target, const std::vector<std::filesystem::pa
     request.files.emplace(file.id, file);
   }
 
-  const HttpResult prepared = http_post(target.ip, target.port, kRoutePrepareUpload, to_json(request).dump());
+  const bool v2 = target.version != "1.0";
+  const HttpResult prepared = http_post(target.ip, target.port, v2 ? kRoutePrepareUpload : kRoutePrepareUploadV1, to_json(request).dump());
   if (prepared.status != 200) {
     return false;
   }
 
   PrepareUploadResponseDto response;
   try {
-    response = prepare_upload_response_from_json(Json::parse(prepared.body));
+    const Json body = Json::parse(prepared.body);
+    if (v2) {
+      response = prepare_upload_response_from_json(body);
+    } else {
+      response.session_id = "";
+      for (const auto& entry : body.as_object()) {
+        response.files.emplace(entry.first, entry.second.as_string());
+      }
+    }
   } catch (const std::exception&) {
     return false;
   }
@@ -819,11 +828,14 @@ bool send_files_http(const Device& target, const std::vector<std::filesystem::pa
       return false;
     }
 
-    const std::string path = with_query(kRouteUpload, {
-        {"sessionId", response.session_id},
+    std::map<std::string, std::string> query = {
         {"fileId", file.id},
         {"token", token->second},
-    });
+    };
+    if (v2) {
+      query.emplace("sessionId", response.session_id);
+    }
+    const std::string path = with_query(v2 ? kRouteUpload : kRouteUploadV1, query);
     const HttpResult uploaded = post_file_raw(target.ip, target.port, path, in, file.size, file.file_type);
     if (uploaded.status != 200) {
       all_uploaded = false;

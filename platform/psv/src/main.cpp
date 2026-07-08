@@ -3,6 +3,9 @@
 #include <cstdlib>
 #include <cstdio>
 
+extern "C" void flockfile(FILE*) {}
+extern "C" void funlockfile(FILE*) {}
+
 namespace {
 
 brls::Label* makeLabel(const std::string& text, float size, brls::HorizontalAlign align)

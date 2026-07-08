@@ -67,6 +67,14 @@ void append_log(const std::string& line) {
   std::fclose(out);
 }
 
+void reset_upload_session() {
+  g_session.active = false;
+  g_session.file_count = 0;
+  for (int i = 0; i < kMaxFiles; ++i) {
+    g_session.files[i] = PendingFile{};
+  }
+}
+
 bool starts_with(const std::string& value, const char* prefix) {
   return value.rfind(prefix, 0) == 0;
 }
@@ -1147,9 +1155,22 @@ void handle_upload(int fd, const std::string& target, const std::string& initial
   send_response(fd, 200, "application/json", "{}");
 }
 
-void handle_cancel(int fd) {
-  g_session.active = false;
+void handle_cancel(int fd, const std::string& target, bool v2) {
+  const std::string session_id = query_value(target, "sessionId");
+  if (v2 && session_id.empty()) {
+    append_log("cancel rejected: missing sessionId");
+    send_response(fd, 400, "text/plain", "missing sessionId");
+    return;
+  }
+  if (v2 && (!g_session.active || session_id != g_session.session_id)) {
+    append_log("cancel ignored sessionId=" + session_id + " active=" + std::to_string(g_session.active));
+    send_response(fd, 404, "text/plain", "session not found");
+    return;
+  }
+
+  reset_upload_session();
   std::snprintf(g_status, sizeof(g_status), "Session cancelled");
+  append_log("cancel ok sessionId=" + (session_id.empty() ? std::string("<legacy>") : session_id));
   send_response(fd, 200, "text/plain", "ok");
 }
 
@@ -1177,7 +1198,7 @@ void handle_client(int fd) {
   } else if (first_method_is(request, "POST") && (starts_with(target, "/api/localsend/v2/upload") || starts_with(target, "/api/localsend/v1/send"))) {
     handle_upload(fd, target, initial_body, length, chunked, starts_with(target, "/api/localsend/v2/upload"));
   } else if (first_method_is(request, "POST") && (starts_with(target, "/api/localsend/v2/cancel") || starts_with(target, "/api/localsend/v1/cancel"))) {
-    handle_cancel(fd);
+    handle_cancel(fd, target, starts_with(target, "/api/localsend/v2/cancel"));
   } else {
     send_response(fd, 404, "text/plain", "not found");
   }

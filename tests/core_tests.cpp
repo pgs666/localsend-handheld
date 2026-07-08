@@ -297,6 +297,48 @@ void test_http_v1_legacy_routes() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_cancel_rejects_upload() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-cancel-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Receiver";
+  self.protocol = localsend::ProtocolType::Http;
+
+  localsend::LocalSendServer server(self, dir);
+  require(server.start(0), "server failed to start for cancel test");
+
+  localsend::PrepareUploadRequestDto request;
+  request.info.alias = "Sender";
+  request.info.port = 12345;
+  request.info.protocol = localsend::ProtocolType::Http;
+
+  localsend::FileDto file;
+  file.id = "cancel-file";
+  file.file_name = "cancel.txt";
+  file.size = 5;
+  file.file_type = "text/plain";
+  request.files.emplace(file.id, file);
+
+  const auto prepare = localsend::http_post("127.0.0.1", server.port(), localsend::kRoutePrepareUpload, localsend::to_json(request).dump());
+  require(prepare.status == 200, "prepare upload cancel test failed");
+  const auto response = localsend::prepare_upload_response_from_json(localsend::Json::parse(prepare.body));
+  const std::string token = response.files.at(file.id);
+
+  const std::string cancel_path = std::string(localsend::kRouteCancel) + "?sessionId=" + response.session_id;
+  const auto cancel = localsend::http_post("127.0.0.1", server.port(), cancel_path, "");
+  require(cancel.status == 200, "cancel request failed");
+
+  const std::string upload_path = std::string(localsend::kRouteUpload) + "?sessionId=" + response.session_id + "&fileId=" + file.id + "&token=" + token;
+  const auto upload = localsend::http_post("127.0.0.1", server.port(), upload_path, "hello", file.file_type);
+  require(upload.status != 200, "cancelled session upload should fail");
+  require(!std::filesystem::exists(dir / "cancel.txt"), "cancelled upload should not create file");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
 void test_http_send_to_v1_target() {
   const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-send-v1-tests";
   const auto source_dir = dir / "source";
@@ -482,6 +524,7 @@ int main() {
     test_http_server_routes_and_upload();
     test_http_send_multiple_files();
     test_http_v1_legacy_routes();
+    test_http_cancel_rejects_upload();
     test_http_send_to_v1_target();
     test_http_prepare_uses_file_id();
     test_http_server_chunked_upload();

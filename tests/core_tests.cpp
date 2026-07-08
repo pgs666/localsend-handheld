@@ -1,3 +1,4 @@
+#include "localsend/app_service.hpp"
 #include "localsend/constants.hpp"
 #include "localsend/config.hpp"
 #include "localsend/device_store.hpp"
@@ -509,6 +510,88 @@ void test_config_round_trip() {
   require(!loaded.discovery_enabled, "config discovery round trip failed");
   require(loaded.auto_accept, "config auto accept round trip failed");
 
+  std::filesystem::remove_all(dir);
+}
+
+void test_app_service_status_and_manual_device() {
+  auto config = localsend::default_config(localsend::PlatformKind::Desktop);
+  config.alias = "Service";
+  config.port = 0;
+  config.discovery_enabled = false;
+
+  localsend::AppServiceOptions options;
+  options.platform = localsend::PlatformKind::Desktop;
+  options.enable_tls = false;
+  options.device_model = "Service test";
+
+  localsend::AppService service(config, options);
+  auto status = service.status();
+  require(!status.server_running, "service should start stopped");
+  require(!status.https, "service should use HTTP when TLS disabled");
+  require(status.alias == "Service", "service alias failed");
+  require(service.self_info().device_model == "Service test", "service model failed");
+  require(!service.announce_once(), "disabled discovery should not announce");
+  require(service.refresh_discovery(std::chrono::milliseconds(1)) == 0, "disabled discovery should not refresh");
+
+  const std::string key = service.add_manual_device("127.0.0.1", 53317, false, "Manual", "");
+  require(key == "endpoint:127.0.0.1:53317", "service manual key failed");
+  status = service.status();
+  require(status.device_count == 1, "service device count failed");
+  const auto entry = service.devices().get(key);
+  require(entry.has_value(), "service manual device missing");
+  require(entry->source == localsend::DeviceSource::Manual, "service manual source failed");
+}
+
+void test_app_service_send_to_manual_device() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-service-tests";
+  const auto inbox = dir / "inbox";
+  const auto source_dir = dir / "source";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(inbox);
+  std::filesystem::create_directories(source_dir);
+
+  auto config = localsend::default_config(localsend::PlatformKind::Desktop);
+  config.alias = "Service Receiver";
+  config.port = 0;
+  config.inbox_path = inbox;
+  config.certificate_path = dir / "cert.pem";
+  config.private_key_path = dir / "key.pem";
+  config.discovery_enabled = false;
+
+  localsend::AppServiceOptions options;
+  options.platform = localsend::PlatformKind::Desktop;
+  options.enable_tls = true;
+
+  localsend::AppService service(config, options);
+  require(service.start_server(), "service server failed to start");
+  auto status = service.status();
+  require(status.server_running, "service server status failed");
+  require(status.https, "service should use HTTPS");
+  require(status.fingerprint.size() == 64, "service fingerprint failed");
+  require(status.port > 0, "service port failed");
+
+  const auto source = source_dir / "service.txt";
+  {
+    std::ofstream out(source, std::ios::binary);
+    out << "service transfer";
+  }
+
+  const std::string key = service.add_manual_device("127.0.0.1", status.port, true, "Loopback", status.fingerprint);
+  require(service.send_files_to_device(key, {source}), "service send failed");
+  require(std::filesystem::exists(inbox / "service.txt"), "service uploaded file missing");
+
+  const auto transfers = service.transfers().snapshot();
+  require(transfers.size() == 2, "service should track send and receive transfers");
+  int completed = 0;
+  for (const auto& transfer : transfers) {
+    if (transfer.status == localsend::TransferStatus::Completed) {
+      ++completed;
+    }
+  }
+  require(completed == 2, "service transfers should complete");
+
+  service.stop_server();
+  require(!service.status().server_running, "service should stop server");
   std::filesystem::remove_all(dir);
 }
 
@@ -1076,6 +1159,8 @@ int main() {
     test_route_constants();
     test_default_config_paths();
     test_config_round_trip();
+    test_app_service_status_and_manual_device();
+    test_app_service_send_to_manual_device();
     test_safe_filename();
     test_unique_destination();
     test_http_server_routes_and_upload();

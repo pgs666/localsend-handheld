@@ -23,6 +23,7 @@ set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "Build static Mbed TLS libraries" F
 add_subdirectory(third_party/mbedtls EXCLUDE_FROM_ALL)
 
 add_library(localsend_core
+  src/core/app_service.cpp
   src/core/config.cpp
   src/core/device_store.cpp
   src/core/discovery.cpp

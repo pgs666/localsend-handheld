@@ -1,0 +1,154 @@
+#include "localsend/app_service.hpp"
+
+#include "localsend/discovery.hpp"
+#include "localsend/security.hpp"
+
+#include <utility>
+
+namespace localsend {
+namespace {
+
+std::string default_device_model(PlatformKind platform) {
+  switch (platform) {
+  case PlatformKind::Switch:
+    return "Nintendo Switch";
+  case PlatformKind::Psv:
+    return "PlayStation Vita";
+  case PlatformKind::Desktop:
+    return "Desktop prototype";
+  }
+  return "LocalSend Handheld";
+}
+
+} // namespace
+
+AppService::AppService(AppConfig config, AppServiceOptions options)
+    : config_(std::move(config)), options_(std::move(options)), self_(make_self_info()) {}
+
+AppService::~AppService() {
+  stop_server();
+}
+
+AppServiceStatus AppService::status() const {
+  AppServiceStatus status;
+  status.server_running = server_running();
+  status.https = self_.protocol == ProtocolType::Https;
+  status.alias = self_.alias;
+  status.fingerprint = self_.fingerprint;
+  status.port = self_.port;
+  status.device_count = devices_.snapshot().size();
+  status.transfer_count = transfers_.snapshot().size();
+  return status;
+}
+
+bool AppService::start_server() {
+  if (server_) {
+    return true;
+  }
+
+  self_ = make_self_info();
+  try {
+    if (options_.enable_tls) {
+      const TlsIdentity identity = load_or_create_tls_identity(config_.certificate_path, config_.private_key_path);
+      self_.protocol = ProtocolType::Https;
+      self_.fingerprint = identity.fingerprint;
+      server_ = std::make_unique<LocalSendServer>(self_,
+                                                  config_.inbox_path,
+                                                  TlsCredentials{identity.certificate_pem, identity.private_key_pem},
+                                                  &transfers_);
+    } else {
+      self_.protocol = ProtocolType::Http;
+      self_.fingerprint.clear();
+      server_ = std::make_unique<LocalSendServer>(self_, config_.inbox_path, &transfers_);
+    }
+  } catch (const std::exception&) {
+    server_.reset();
+    return false;
+  }
+
+  if (!server_->start(config_.port)) {
+    server_.reset();
+    return false;
+  }
+  self_.port = server_->port();
+  return true;
+}
+
+void AppService::stop_server() {
+  if (!server_) {
+    return;
+  }
+  server_->stop();
+  server_.reset();
+}
+
+bool AppService::announce_once() const {
+  if (!config_.discovery_enabled) {
+    return false;
+  }
+
+  MulticastDto announcement;
+  static_cast<InfoRegisterDto&>(announcement) = self_;
+  announcement.announce = true;
+  return announce_multicast(announcement);
+}
+
+int AppService::refresh_discovery(std::chrono::milliseconds timeout) {
+  if (!config_.discovery_enabled) {
+    return 0;
+  }
+
+  int added_or_updated = 0;
+  for (auto& device : discover_peers(timeout)) {
+    if (is_self_device(device)) {
+      continue;
+    }
+    devices_.upsert_discovered(std::move(device));
+    ++added_or_updated;
+  }
+  return added_or_updated;
+}
+
+std::string AppService::add_manual_device(std::string ip,
+                                          int port,
+                                          bool https,
+                                          std::string alias,
+                                          std::string fingerprint) {
+  Device device;
+  device.ip = std::move(ip);
+  device.port = port;
+  device.https = https;
+  device.alias = std::move(alias);
+  device.fingerprint = std::move(fingerprint);
+  device.version = "2.1";
+  return devices_.upsert_manual(std::move(device));
+}
+
+bool AppService::send_files_to_device(const std::string& device_key, const std::vector<std::filesystem::path>& file_paths) {
+  const std::optional<DeviceEntry> entry = devices_.get(device_key);
+  if (!entry) {
+    return false;
+  }
+  return send_files_http(entry->device, file_paths, self_, &transfers_);
+}
+
+InfoRegisterDto AppService::make_self_info() const {
+  InfoRegisterDto self;
+  self.alias = config_.alias;
+  self.port = config_.port;
+  self.protocol = options_.enable_tls ? ProtocolType::Https : ProtocolType::Http;
+  self.fingerprint = "";
+  self.device_model = options_.device_model.empty() ? default_device_model(options_.platform) : options_.device_model;
+  self.device_type = options_.device_type;
+  self.download = false;
+  return self;
+}
+
+bool AppService::is_self_device(const Device& device) const {
+  if (!self_.fingerprint.empty() && device.fingerprint == self_.fingerprint) {
+    return true;
+  }
+  return device.port == self_.port && device.alias == self_.alias;
+}
+
+} // namespace localsend

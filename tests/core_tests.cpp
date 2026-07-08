@@ -617,6 +617,49 @@ void test_app_service_send_to_manual_device() {
   std::filesystem::remove_all(dir);
 }
 
+void test_app_service_async_send_to_manual_device() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-service-async-tests";
+  const auto inbox = dir / "inbox";
+  const auto source_dir = dir / "source";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(inbox);
+  std::filesystem::create_directories(source_dir);
+
+  auto config = localsend::default_config(localsend::PlatformKind::Desktop);
+  config.alias = "Async Service Receiver";
+  config.port = 0;
+  config.inbox_path = inbox;
+  config.discovery_enabled = false;
+
+  localsend::AppServiceOptions options;
+  options.enable_tls = false;
+  localsend::AppService service(config, options);
+  require(service.start_server(), "async service server failed to start");
+
+  const auto source = source_dir / "async.txt";
+  {
+    std::ofstream out(source, std::ios::binary);
+    out << "async transfer";
+  }
+
+  const std::string key = service.add_manual_device("127.0.0.1", service.status().port, false, "Loopback", "");
+  require(service.start_send_to_device(key, {source}), "async send should start");
+  require(service.status().send_running, "async send status should be running");
+  require(!service.start_send_to_device(key, {source}), "parallel async send should be rejected");
+  service.wait_for_send_idle();
+  require(!service.status().send_running, "async send status should stop");
+  require(std::filesystem::exists(inbox / "async.txt"), "async uploaded file missing");
+
+  const auto transfers = service.transfers().snapshot();
+  require(transfers.size() == 2, "async send should track send and receive transfers");
+  for (const auto& transfer : transfers) {
+    require(transfer.status == localsend::TransferStatus::Completed, "async transfer should complete");
+  }
+
+  service.stop_server();
+  std::filesystem::remove_all(dir);
+}
+
 void test_safe_filename() {
   require(localsend::sanitize_filename("../bad/name.txt") == "badname.txt", "path traversal sanitize failed");
   require(localsend::sanitize_filename("..") == "file", "empty sanitize fallback failed");
@@ -1184,6 +1227,7 @@ int main() {
     test_app_service_status_and_manual_device();
     test_app_service_discovery_loop_lifecycle();
     test_app_service_send_to_manual_device();
+    test_app_service_async_send_to_manual_device();
     test_safe_filename();
     test_unique_destination();
     test_http_server_routes_and_upload();

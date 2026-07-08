@@ -27,6 +27,7 @@ AppService::AppService(AppConfig config, AppServiceOptions options)
     : config_(std::move(config)), options_(std::move(options)), self_(make_self_info()) {}
 
 AppService::~AppService() {
+  wait_for_send_idle();
   stop_discovery();
   stop_server();
 }
@@ -35,6 +36,7 @@ AppServiceStatus AppService::status() const {
   AppServiceStatus status;
   status.server_running = server_running();
   status.discovery_running = discovery_running();
+  status.send_running = send_running();
   status.https = self_.protocol == ProtocolType::Https;
   status.alias = self_.alias;
   status.fingerprint = self_.fingerprint;
@@ -158,6 +160,32 @@ bool AppService::send_files_to_device(const std::string& device_key, const std::
   return send_files_http(entry->device, file_paths, self_, &transfers_);
 }
 
+bool AppService::start_send_to_device(const std::string& device_key, std::vector<std::filesystem::path> file_paths) {
+  if (send_running_) {
+    return false;
+  }
+
+  if (send_thread_.joinable()) {
+    send_thread_.join();
+  }
+
+  const std::optional<DeviceEntry> entry = devices_.get(device_key);
+  if (!entry || file_paths.empty()) {
+    return false;
+  }
+
+  send_running_ = true;
+  send_thread_ = std::thread(&AppService::send_worker, this, entry->device, std::move(file_paths));
+  return true;
+}
+
+void AppService::wait_for_send_idle() {
+  if (send_thread_.joinable()) {
+    send_thread_.join();
+  }
+  send_running_ = false;
+}
+
 InfoRegisterDto AppService::make_self_info() const {
   InfoRegisterDto self;
   self.alias = config_.alias;
@@ -194,6 +222,11 @@ void AppService::discovery_loop(std::chrono::milliseconds interval, std::chrono:
       slept += current_sleep;
     }
   }
+}
+
+void AppService::send_worker(Device device, std::vector<std::filesystem::path> file_paths) {
+  send_files_http(device, file_paths, self_, &transfers_);
+  send_running_ = false;
 }
 
 } // namespace localsend

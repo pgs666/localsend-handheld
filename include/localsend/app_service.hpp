@@ -27,6 +27,7 @@ struct AppServiceOptions {
 struct AppServiceStatus {
   bool server_running = false;
   bool discovery_running = false;
+  bool send_running = false;
   bool https = false;
   std::string alias;
   std::string fingerprint;
@@ -69,11 +70,15 @@ public:
                                 std::string fingerprint = "");
 
   bool send_files_to_device(const std::string& device_key, const std::vector<std::filesystem::path>& file_paths);
+  bool start_send_to_device(const std::string& device_key, std::vector<std::filesystem::path> file_paths);
+  void wait_for_send_idle();
+  bool send_running() const { return send_running_; }
 
 private:
   InfoRegisterDto make_self_info() const;
   bool is_self_device(const Device& device) const;
   void discovery_loop(std::chrono::milliseconds interval, std::chrono::milliseconds scan_timeout);
+  void send_worker(Device device, std::vector<std::filesystem::path> file_paths);
 
   AppConfig config_;
   AppServiceOptions options_;
@@ -82,7 +87,9 @@ private:
   TransferStore transfers_;
   std::unique_ptr<LocalSendServer> server_;
   std::atomic<bool> discovery_running_{false};
+  std::atomic<bool> send_running_{false};
   std::thread discovery_thread_;
+  std::thread send_thread_;
 };
 
 } // namespace localsend

@@ -288,6 +288,54 @@ std::string previous_object_key(const std::string& body, size_t object_start, co
   return body.substr(begin + 1, end - begin - 1);
 }
 
+size_t skip_ws(const std::string& body, size_t pos) {
+  while (pos < body.size() && (body[pos] == ' ' || body[pos] == '\n' || body[pos] == '\r' || body[pos] == '\t')) {
+    ++pos;
+  }
+  return pos;
+}
+
+size_t parse_json_string_at(const std::string& body, size_t quote_pos, std::string& out) {
+  if (quote_pos >= body.size() || body[quote_pos] != '"') {
+    return std::string::npos;
+  }
+  out.clear();
+  bool escape = false;
+  for (size_t pos = quote_pos + 1; pos < body.size(); ++pos) {
+    const char c = body[pos];
+    if (escape) {
+      out.push_back(c);
+      escape = false;
+      continue;
+    }
+    if (c == '\\') {
+      escape = true;
+      continue;
+    }
+    if (c == '"') {
+      return pos + 1;
+    }
+    out.push_back(c);
+  }
+  return std::string::npos;
+}
+
+size_t files_object_start(const std::string& body) {
+  size_t files = body.find("\"files\"");
+  if (files == std::string::npos) {
+    return std::string::npos;
+  }
+  size_t colon = body.find(':', files);
+  if (colon == std::string::npos) {
+    return std::string::npos;
+  }
+  size_t object_start = body.find('{', colon);
+  if (object_start == std::string::npos) {
+    return std::string::npos;
+  }
+  return object_start;
+}
+
 std::string query_value(const std::string& target, const std::string& key) {
   const size_t q = target.find('?');
   if (q == std::string::npos) {
@@ -398,6 +446,28 @@ void handle_info(int fd) {
   send_response(fd, 200, "application/json", body);
 }
 
+void handle_debug_log(int fd) {
+  FILE* in = std::fopen(kLogPath, "rb");
+  if (!in) {
+    send_response(fd, 404, "text/plain", "log not found");
+    return;
+  }
+  std::string body;
+  char chunk[1024];
+  while (true) {
+    const size_t got = std::fread(chunk, 1, sizeof(chunk), in);
+    if (got == 0) {
+      break;
+    }
+    body.append(chunk, got);
+    if (body.size() > 64 * 1024) {
+      body.erase(0, body.size() - 64 * 1024);
+    }
+  }
+  std::fclose(in);
+  send_response(fd, 200, "text/plain", body);
+}
+
 void handle_prepare_upload(int fd, const std::string& body) {
   append_log("prepare-upload body bytes=" + std::to_string(body.size()));
   append_log(body.substr(0, 4096));
@@ -405,28 +475,51 @@ void handle_prepare_upload(int fd, const std::string& body) {
   g_session.session_id = "switch-session";
   g_session.file_count = 0;
 
-  size_t pos = 0;
-  while (g_session.file_count < kMaxFiles) {
-    pos = body.find("\"fileName\":", pos);
-    if (pos == std::string::npos) {
+  const size_t files_start = files_object_start(body);
+  const size_t files_end = files_start == std::string::npos ? std::string::npos : matching_brace(body, files_start);
+  size_t pos = files_start == std::string::npos ? 0 : files_start + 1;
+  while (g_session.file_count < kMaxFiles && pos < body.size() && (files_end == std::string::npos || pos < files_end)) {
+    pos = skip_ws(body, pos);
+    if (pos >= body.size() || body[pos] == '}') {
       break;
     }
 
-    const size_t object_start = body.rfind('{', pos);
-    const size_t object_end = object_start == std::string::npos ? std::string::npos : matching_brace(body, object_start);
+    std::string map_key;
+    const size_t after_key = parse_json_string_at(body, pos, map_key);
+    if (after_key == std::string::npos) {
+      break;
+    }
+    size_t colon = body.find(':', after_key);
+    if (colon == std::string::npos || (files_end != std::string::npos && colon >= files_end)) {
+      break;
+    }
+    const size_t object_start = body.find('{', colon);
+    if (object_start == std::string::npos || (files_end != std::string::npos && object_start >= files_end)) {
+      break;
+    }
+    const size_t object_end = matching_brace(body, object_start);
+    if (object_end == std::string::npos) {
+      break;
+    }
+
     PendingFile& file = g_session.files[g_session.file_count];
     file.active = true;
-    const std::string fallback_id = previous_object_key(body, object_start == std::string::npos ? pos : object_start, std::to_string(g_session.file_count));
+    const std::string fallback_id = map_key.empty() ? previous_object_key(body, object_start, std::to_string(g_session.file_count)) : map_key;
     file.map_key = fallback_id;
-    file.file_id = find_json_string_from(body, object_start == std::string::npos ? pos : object_start, "id", fallback_id);
+    file.file_id = find_json_string_from(body, object_start, "id", fallback_id);
     if (object_end != std::string::npos && body.find("\"id\":", object_start) > object_end) {
       file.file_id = fallback_id;
     }
     file.token = "switch-token-" + std::to_string(g_session.file_count);
-    file.file_name = sanitize_filename(find_json_string_from(body, pos, "fileName", "localsend-upload.bin"));
-    file.size = find_json_size_from(body, pos, 0);
+    file.file_name = sanitize_filename(find_json_string_from(body, object_start, "fileName", "localsend-upload.bin"));
+    file.size = find_json_size_from(body, object_start, 0);
     ++g_session.file_count;
-    pos += 11;
+    pos = object_end + 1;
+    const size_t comma = body.find(',', pos);
+    if (comma == std::string::npos || (files_end != std::string::npos && comma >= files_end)) {
+      break;
+    }
+    pos = comma + 1;
   }
 
   if (g_session.file_count == 0) {
@@ -551,6 +644,8 @@ void handle_client(int fd) {
 
   if (first_method_is(request, "GET") && starts_with(target, "/api/localsend/v2/info")) {
     handle_info(fd);
+  } else if (first_method_is(request, "GET") && starts_with(target, "/debug/log")) {
+    handle_debug_log(fd);
   } else if (first_method_is(request, "POST") && starts_with(target, "/api/localsend/v2/register")) {
     handle_info(fd);
   } else if (first_method_is(request, "POST") && starts_with(target, "/api/localsend/v2/prepare-upload")) {

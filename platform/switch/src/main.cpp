@@ -17,6 +17,7 @@ namespace {
 constexpr int kPort = 53317;
 constexpr int kBufferSize = 64 * 1024;
 constexpr const char* kInbox = "sdmc:/switch/localsend/inbox";
+constexpr const char* kMulticastGroup = "224.0.0.167";
 
 struct UploadSession {
   bool active = false;
@@ -30,6 +31,7 @@ struct UploadSession {
 UploadSession g_session;
 int g_received_files = 0;
 char g_status[256] = "Starting";
+int g_announcements = 0;
 
 bool starts_with(const std::string& value, const char* prefix) {
   return value.rfind(prefix, 0) == 0;
@@ -346,11 +348,42 @@ int create_server() {
   return fd;
 }
 
+void send_announcement() {
+  const int fd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (fd < 0) {
+    return;
+  }
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(kPort);
+  if (inet_pton(AF_INET, kMulticastGroup, &addr.sin_addr) != 1) {
+    close(fd);
+    return;
+  }
+
+  const std::string payload =
+      "{\"alias\":\"LocalSend Switch\",\"version\":\"2.1\",\"deviceModel\":\"Nintendo Switch\","
+      "\"deviceType\":\"desktop\",\"fingerprint\":\"\",\"port\":53317,\"protocol\":\"http\","
+      "\"download\":false,\"announce\":true}";
+  const ssize_t sent = sendto(fd,
+                              payload.data(),
+                              payload.size(),
+                              0,
+                              reinterpret_cast<sockaddr*>(&addr),
+                              sizeof(addr));
+  if (sent == static_cast<ssize_t>(payload.size())) {
+    ++g_announcements;
+  }
+  close(fd);
+}
+
 void draw_status() {
   consoleClear();
   std::printf("LocalSend Handheld\n");
   std::printf("Switch HTTP receive MVP\n\n");
   std::printf("Listening: http://<switch-ip>:%d\n", kPort);
+  std::printf("Discovery: %s:%d announcements=%d\n", kMulticastGroup, kPort, g_announcements);
   std::printf("Inbox: %s\n", kInbox);
   std::printf("Encryption must be disabled on peers.\n\n");
   std::printf("Files received: %d\n", g_received_files);
@@ -376,6 +409,7 @@ int main(int argc, char* argv[]) {
   } else {
     std::snprintf(g_status, sizeof(g_status), "Ready");
   }
+  send_announcement();
 
   padConfigureInput(1, HidNpadStyleSet_NpadStandard);
   PadState pad;
@@ -399,6 +433,9 @@ int main(int argc, char* argv[]) {
       }
     }
 
+    if ((frames % 120) == 0) {
+      send_announcement();
+    }
     if ((frames++ % 30) == 0) {
       draw_status();
     }

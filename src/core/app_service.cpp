@@ -4,6 +4,12 @@
 #include "localsend/security.hpp"
 
 #include <algorithm>
+#if LOCALSEND_PLATFORM_PSV
+#include <pthread.h>
+#include <unistd.h>
+#else
+#include <thread>
+#endif
 #include <utility>
 
 namespace localsend {
@@ -19,6 +25,14 @@ std::string default_device_model(PlatformKind platform) {
     return "Desktop prototype";
   }
   return "LocalSend Handheld";
+}
+
+void sleep_for_interval(std::chrono::milliseconds duration) {
+#if LOCALSEND_PLATFORM_PSV
+  ::usleep(static_cast<useconds_t>(duration.count() * 1000));
+#else
+  std::this_thread::sleep_for(duration);
+#endif
 }
 
 } // namespace
@@ -159,7 +173,17 @@ bool AppService::start_discovery(std::chrono::milliseconds interval, std::chrono
   }
 
   discovery_running_ = true;
+#if LOCALSEND_PLATFORM_PSV
+  discovery_interval_ = interval;
+  discovery_scan_timeout_ = scan_timeout;
+  if (::pthread_create(&discovery_thread_, nullptr, &AppService::discovery_thread_entry, this) != 0) {
+    discovery_running_ = false;
+    return false;
+  }
+  discovery_thread_started_ = true;
+#else
   discovery_thread_ = std::thread(&AppService::discovery_loop, this, interval, scan_timeout);
+#endif
   return true;
 }
 
@@ -168,9 +192,16 @@ void AppService::stop_discovery() {
     return;
   }
   discovery_running_ = false;
+#if LOCALSEND_PLATFORM_PSV
+  if (discovery_thread_started_) {
+    ::pthread_join(discovery_thread_, nullptr);
+    discovery_thread_started_ = false;
+  }
+#else
   if (discovery_thread_.joinable()) {
     discovery_thread_.join();
   }
+#endif
 }
 
 std::string AppService::add_manual_device(std::string ip,
@@ -201,9 +232,16 @@ bool AppService::start_send_to_device(const std::string& device_key, std::vector
     return false;
   }
 
+#if LOCALSEND_PLATFORM_PSV
+  if (send_thread_started_) {
+    ::pthread_join(send_thread_, nullptr);
+    send_thread_started_ = false;
+  }
+#else
   if (send_thread_.joinable()) {
     send_thread_.join();
   }
+#endif
 
   const std::optional<DeviceEntry> entry = devices_.get(device_key);
   if (!entry || file_paths.empty()) {
@@ -211,14 +249,32 @@ bool AppService::start_send_to_device(const std::string& device_key, std::vector
   }
 
   send_running_ = true;
+#if LOCALSEND_PLATFORM_PSV
+  send_device_ = entry->device;
+  send_file_paths_ = std::move(file_paths);
+  if (::pthread_create(&send_thread_, nullptr, &AppService::send_thread_entry, this) != 0) {
+    send_running_ = false;
+    send_file_paths_.clear();
+    return false;
+  }
+  send_thread_started_ = true;
+#else
   send_thread_ = std::thread(&AppService::send_worker, this, entry->device, std::move(file_paths));
+#endif
   return true;
 }
 
 void AppService::wait_for_send_idle() {
+#if LOCALSEND_PLATFORM_PSV
+  if (send_thread_started_) {
+    ::pthread_join(send_thread_, nullptr);
+    send_thread_started_ = false;
+  }
+#else
   if (send_thread_.joinable()) {
     send_thread_.join();
   }
+#endif
   send_running_ = false;
 }
 
@@ -254,7 +310,7 @@ void AppService::discovery_loop(std::chrono::milliseconds interval, std::chrono:
     while (discovery_running_ && slept < bounded_interval) {
       const auto remaining = bounded_interval - slept;
       const auto current_sleep = std::min(sleep_step, remaining);
-      std::this_thread::sleep_for(current_sleep);
+      sleep_for_interval(current_sleep);
       slept += current_sleep;
     }
   }
@@ -264,5 +320,20 @@ void AppService::send_worker(Device device, std::vector<std::filesystem::path> f
   send_files_http(device, file_paths, self_, &transfers_);
   send_running_ = false;
 }
+
+#if LOCALSEND_PLATFORM_PSV
+void* AppService::discovery_thread_entry(void* arg) {
+  auto* service = static_cast<AppService*>(arg);
+  service->discovery_loop(service->discovery_interval_, service->discovery_scan_timeout_);
+  return nullptr;
+}
+
+void* AppService::send_thread_entry(void* arg) {
+  auto* service = static_cast<AppService*>(arg);
+  service->send_worker(service->send_device_, std::move(service->send_file_paths_));
+  service->send_file_paths_.clear();
+  return nullptr;
+}
+#endif
 
 } // namespace localsend

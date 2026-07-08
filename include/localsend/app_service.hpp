@@ -12,7 +12,11 @@
 #include <memory>
 #include <optional>
 #include <string>
+#if LOCALSEND_PLATFORM_PSV
+#include <pthread.h>
+#else
 #include <thread>
+#endif
 #include <vector>
 
 namespace localsend {
@@ -90,6 +94,10 @@ private:
   bool is_self_device(const Device& device) const;
   void discovery_loop(std::chrono::milliseconds interval, std::chrono::milliseconds scan_timeout);
   void send_worker(Device device, std::vector<std::filesystem::path> file_paths);
+#if LOCALSEND_PLATFORM_PSV
+  static void* discovery_thread_entry(void* arg);
+  static void* send_thread_entry(void* arg);
+#endif
 
   AppConfig config_;
   AppServiceOptions options_;
@@ -99,8 +107,19 @@ private:
   std::unique_ptr<LocalSendServer> server_;
   std::atomic<bool> discovery_running_{false};
   std::atomic<bool> send_running_{false};
+#if LOCALSEND_PLATFORM_PSV
+  pthread_t discovery_thread_{};
+  pthread_t send_thread_{};
+  bool discovery_thread_started_ = false;
+  bool send_thread_started_ = false;
+  std::chrono::milliseconds discovery_interval_{std::chrono::seconds(5)};
+  std::chrono::milliseconds discovery_scan_timeout_{std::chrono::milliseconds(500)};
+  Device send_device_;
+  std::vector<std::filesystem::path> send_file_paths_;
+#else
   std::thread discovery_thread_;
   std::thread send_thread_;
+#endif
 };
 
 } // namespace localsend

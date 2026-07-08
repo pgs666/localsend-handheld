@@ -1004,9 +1004,7 @@ bool accept_tls_server(int fd, ClientConnection& connection) {
                                 reinterpret_cast<const unsigned char*>(kSwitchPrivateKeyPem),
                                 std::strlen(kSwitchPrivateKeyPem) + 1,
                                 nullptr,
-                                0,
-                                mbedtls_ctr_drbg_random,
-                                &connection.ctr_drbg);
+                                0);
   if (result != 0) {
     append_log("tls server key parse failed result=" + std::to_string(result));
     return false;

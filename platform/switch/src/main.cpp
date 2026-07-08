@@ -11,6 +11,7 @@
 #include <string>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 namespace {
@@ -18,6 +19,7 @@ namespace {
 constexpr int kPort = 53317;
 constexpr int kBufferSize = 64 * 1024;
 constexpr int kMaxFiles = 16;
+constexpr int kClientSocketTimeoutSeconds = 120;
 constexpr const char* kInbox = "sdmc:/switch/localsend/inbox";
 // Temporary protocol bring-up path. Remove after borealis device picker and file browser land.
 constexpr const char* kOutbox = "sdmc:/switch/localsend/outbox";
@@ -584,6 +586,11 @@ int connect_tcp(const std::string& ip, int port) {
     close(fd);
     return -1;
   }
+  timeval timeout{};
+  timeout.tv_sec = kClientSocketTimeoutSeconds;
+  timeout.tv_usec = 0;
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
   return fd;
 }
 

@@ -15,16 +15,27 @@
 #include <random>
 #include <sstream>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <vector>
 
 namespace localsend {
 namespace {
 
+constexpr int kClientSocketTimeoutSeconds = 120;
+
 void close_fd(int fd) {
   if (fd >= 0) {
     ::close(fd);
   }
+}
+
+void set_socket_timeouts(int fd) {
+  timeval timeout{};
+  timeout.tv_sec = kClientSocketTimeoutSeconds;
+  timeout.tv_usec = 0;
+  ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+  ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
 }
 
 std::string status_text(int status) {
@@ -371,6 +382,9 @@ int connect_tcp(const std::string& host, int port) {
   }
 
   ::freeaddrinfo(result);
+  if (fd >= 0) {
+    set_socket_timeouts(fd);
+  }
   return fd;
 }
 

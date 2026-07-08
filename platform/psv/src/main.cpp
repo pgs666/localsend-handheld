@@ -25,7 +25,7 @@ int main(int argc, char* argv[]) {
   config.config_path = "ux0:data/localsend/config.json";
   config.log_path = "ux0:data/localsend-borealis.log";
   config.port = 53317;
-  config.enable_tls = false;
+  config.enable_tls = true;
   config.enable_discovery = true;
   return localsend::handheld::run_handheld_app(config);
 }

@@ -360,7 +360,8 @@ std::unique_ptr<AppService> start_service(const HandheldAppConfig& app_config,
   } else {
     state.server_status = "Failed to start";
     state.discovery_status = "Server not started";
-    log_line("Receive server failed to start");
+    const std::string error = service->last_server_error();
+    log_line("Receive server failed to start" + (error.empty() ? std::string() : ": " + error));
   }
   return service;
 }

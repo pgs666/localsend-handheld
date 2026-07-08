@@ -123,6 +123,7 @@ bool AppService::start_server() {
     return true;
   }
 
+  set_last_server_error("");
   self_ = make_self_info();
   try {
     if (options_.enable_tls) {
@@ -135,6 +136,7 @@ bool AppService::start_server() {
                                                   TlsCredentials{identity.certificate_pem, identity.private_key_pem},
                                                   &transfers_);
 #else
+      set_last_server_error("TLS support is not compiled in");
       return false;
 #endif
     } else {
@@ -142,12 +144,14 @@ bool AppService::start_server() {
       self_.fingerprint.clear();
       server_ = std::make_unique<LocalSendServer>(self_, config_.inbox_path, &transfers_);
     }
-  } catch (const std::exception&) {
+  } catch (const std::exception& e) {
+    set_last_server_error(e.what());
     server_.reset();
     return false;
   }
 
   if (!server_->start(config_.port)) {
+    set_last_server_error("listen failed on port " + std::to_string(config_.port));
     server_.reset();
     return false;
   }
@@ -158,6 +162,11 @@ bool AppService::start_server() {
     }
   });
   return true;
+}
+
+std::string AppService::last_server_error() const {
+  std::lock_guard<std::mutex> lock(server_status_mutex_);
+  return last_server_error_;
 }
 
 void AppService::stop_server() {
@@ -389,6 +398,11 @@ void AppService::set_last_send_error(std::string error) {
 void AppService::set_send_status_message(std::string message) {
   std::lock_guard<std::mutex> lock(send_status_mutex_);
   send_status_message_ = std::move(message);
+}
+
+void AppService::set_last_server_error(std::string error) {
+  std::lock_guard<std::mutex> lock(server_status_mutex_);
+  last_server_error_ = std::move(error);
 }
 
 void AppService::wait_for_send_idle() {

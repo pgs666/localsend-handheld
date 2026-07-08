@@ -75,6 +75,7 @@ public:
   void stop_server();
   void poll_server_once();
   bool server_running() const { return server_ != nullptr; }
+  std::string last_server_error() const;
 
   bool announce_once() const;
   int refresh_discovery(std::chrono::milliseconds timeout);
@@ -103,6 +104,7 @@ private:
   bool is_self_device(const Device& device) const;
   void set_last_send_error(std::string error);
   void set_send_status_message(std::string message);
+  void set_last_server_error(std::string error);
   void discovery_loop(std::chrono::milliseconds interval, std::chrono::milliseconds scan_timeout);
   void send_worker(Device device, std::vector<std::filesystem::path> file_paths);
 #if LOCALSEND_PLATFORM_PSV
@@ -118,6 +120,8 @@ private:
   std::unique_ptr<LocalSendServer> server_;
   std::atomic<bool> discovery_running_{false};
   std::atomic<bool> send_running_{false};
+  mutable std::mutex server_status_mutex_;
+  std::string last_server_error_;
   SendFilesControl send_control_;
   mutable std::mutex send_status_mutex_;
   std::string last_send_error_;

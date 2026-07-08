@@ -29,8 +29,11 @@ int tls_send(void* ctx, const unsigned char* buffer, std::size_t size) {
   const ssize_t sent = ::send(fd, buffer, size, 0);
 #endif
   if (sent < 0) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+    if (errno == EINTR) {
       return MBEDTLS_ERR_SSL_WANT_WRITE;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return MBEDTLS_ERR_SSL_TIMEOUT;
     }
     return MBEDTLS_ERR_NET_SEND_FAILED;
   }
@@ -41,8 +44,11 @@ int tls_recv(void* ctx, unsigned char* buffer, std::size_t size) {
   const int fd = *static_cast<int*>(ctx);
   const ssize_t got = ::recv(fd, buffer, size, 0);
   if (got < 0) {
-    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+    if (errno == EINTR) {
       return MBEDTLS_ERR_SSL_WANT_READ;
+    }
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      return MBEDTLS_ERR_SSL_TIMEOUT;
     }
     return MBEDTLS_ERR_NET_RECV_FAILED;
   }

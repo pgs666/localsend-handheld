@@ -75,6 +75,7 @@ struct RuntimeState {
   std::string selected_file_status = "No selectable files";
   std::string send_status = "Select peer/file, then press X";
   std::string last_send_error;
+  std::string last_send_status_message;
   std::size_t selected_file_index = 0;
   std::optional<std::size_t> selected_device_index;
   std::string selected_peer_status = "No online peer selected";
@@ -309,10 +310,21 @@ void refresh_service_snapshot(AppService& service, RuntimeState& state, const Pa
     state.send_status = "Send failed: " + snapshot.status.last_send_error;
     refresh_send_status(state.send_status, refs);
   } else if (snapshot.status.send_running) {
-    state.send_status = "Sending to selected peer";
+    if (!snapshot.status.send_status_message.empty() &&
+        snapshot.status.send_status_message != state.last_send_status_message) {
+      log_line("Send progress: " + snapshot.status.send_status_message);
+    }
+    state.send_status = snapshot.status.send_status_message.empty() ? "Sending to selected peer" : snapshot.status.send_status_message;
+    refresh_send_status(state.send_status, refs);
+  } else if (!snapshot.status.send_status_message.empty()) {
+    if (snapshot.status.send_status_message != state.last_send_status_message) {
+      log_line("Send progress: " + snapshot.status.send_status_message);
+    }
+    state.send_status = snapshot.status.send_status_message;
     refresh_send_status(state.send_status, refs);
   }
   state.last_send_error = snapshot.status.last_send_error;
+  state.last_send_status_message = snapshot.status.send_status_message;
 }
 
 std::unique_ptr<AppService> start_service(const HandheldAppConfig& app_config,

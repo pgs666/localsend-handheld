@@ -1330,6 +1330,12 @@ SendFilesResult send_files_http_detailed(const Device& target,
   auto cancel_requested = [control]() {
     return control && control->cancel_requested.load();
   };
+  auto report_status = [control](const std::string& message) {
+    debug_send_line(message);
+    if (control && control->status_callback) {
+      control->status_callback(message);
+    }
+  };
   auto cancel_transfers = [transfers](const std::vector<std::uint64_t>& transfer_ids) {
     if (!transfers) {
       return;
@@ -1344,6 +1350,7 @@ SendFilesResult send_files_http_detailed(const Device& target,
     return result_error("no files selected");
   }
 
+  report_status("Resolving target transport");
   const Device send_target = resolve_send_target(target);
   auto send_cancel = [&send_target, client_credentials](const std::string& session_id, bool v2) {
     if (!v2 || session_id.empty()) {
@@ -1366,6 +1373,7 @@ SendFilesResult send_files_http_detailed(const Device& target,
   files.reserve(file_paths.size());
   transfer_ids.reserve(file_paths.size());
   for (std::size_t i = 0; i < file_paths.size(); ++i) {
+    report_status("Checking source file " + file_paths[i].filename().string());
     std::ifstream probe(file_paths[i], std::ios::binary);
     if (!probe) {
       return result_error("source file is not readable: " + file_paths[i].filename().string());
@@ -1402,7 +1410,8 @@ SendFilesResult send_files_http_detailed(const Device& target,
   }
 
   const bool v2 = target_uses_v2_api(send_target);
-  debug_send_line(std::string("target api=") + (v2 ? "v2" : "v1"));
+  report_status(std::string("Using LocalSend ") + (v2 ? "v2" : "v1") + " API");
+  report_status("Sending prepare-upload request");
   const HttpResult prepared = request_raw(send_target.ip,
                                           send_target.port,
                                           "POST",
@@ -1412,7 +1421,7 @@ SendFilesResult send_files_http_detailed(const Device& target,
                                           send_target.https,
                                           send_target.fingerprint,
                                           client_credentials);
-  debug_send_line("prepare status=" + std::to_string(prepared.status) + " body=" + prepared.body);
+  report_status("prepare-upload status=" + std::to_string(prepared.status));
   if (cancel_requested()) {
     cancel_transfers(transfer_ids);
     return result_cancelled();
@@ -1491,7 +1500,7 @@ SendFilesResult send_files_http_detailed(const Device& target,
       query.emplace("sessionId", response.session_id);
     }
     const std::string path = with_query(v2 ? kRouteUpload : kRouteUploadV1, query);
-    debug_send_line("upload path=" + path + " size=" + std::to_string(file.size));
+    report_status("Uploading " + file.file_name + " (" + std::to_string(file.size) + " bytes)");
     const HttpResult uploaded = post_file_raw(send_target.ip,
                                               send_target.port,
                                               path,
@@ -1507,7 +1516,7 @@ SendFilesResult send_files_http_detailed(const Device& target,
                                                 }
                                               },
                                               cancel_requested);
-    debug_send_line("upload status=" + std::to_string(uploaded.status) + " body=" + uploaded.body);
+    report_status("upload status=" + std::to_string(uploaded.status));
     if (cancel_requested()) {
       send_cancel(response.session_id, v2);
       cancel_transfers(transfer_ids);

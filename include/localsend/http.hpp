@@ -52,6 +52,7 @@ struct SendFilesResult {
 
 struct SendFilesControl {
   std::atomic<bool> cancel_requested{false};
+  std::function<void(const std::string&)> status_callback;
 };
 
 HttpResult http_get(const std::string& host, int port, const std::string& path);

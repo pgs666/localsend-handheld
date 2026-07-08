@@ -77,6 +77,7 @@ AppServiceStatus AppService::status() const {
   status.alias = self_.alias;
   status.fingerprint = self_.fingerprint;
   status.last_send_error = last_send_error();
+  status.send_status_message = send_status_message();
   status.port = self_.port;
   status.device_count = devices_.snapshot().size();
   status.transfer_count = transfers_.snapshot().size();
@@ -338,7 +339,11 @@ bool AppService::start_send_to_device(const std::string& device_key, std::vector
   }
 
   send_control_.cancel_requested = false;
+  send_control_.status_callback = [this](const std::string& message) {
+    set_send_status_message(message);
+  };
   set_last_send_error("");
+  set_send_status_message("Starting send");
   send_running_ = true;
 #if LOCALSEND_PLATFORM_PSV
   send_device_ = entry->device;
@@ -371,9 +376,19 @@ std::string AppService::last_send_error() const {
   return last_send_error_;
 }
 
+std::string AppService::send_status_message() const {
+  std::lock_guard<std::mutex> lock(send_status_mutex_);
+  return send_status_message_;
+}
+
 void AppService::set_last_send_error(std::string error) {
   std::lock_guard<std::mutex> lock(send_status_mutex_);
   last_send_error_ = std::move(error);
+}
+
+void AppService::set_send_status_message(std::string message) {
+  std::lock_guard<std::mutex> lock(send_status_mutex_);
+  send_status_message_ = std::move(message);
 }
 
 void AppService::wait_for_send_idle() {
@@ -450,10 +465,12 @@ void AppService::send_worker(Device device, std::vector<std::filesystem::path> f
   std::optional<TlsCredentials> client_credentials;
   if (device.https) {
     try {
+      set_send_status_message("Loading HTTPS identity");
       identity = load_or_create_tls_identity(config_.certificate_path, config_.private_key_path);
       client_credentials = TlsCredentials{identity->certificate_pem, identity->private_key_pem};
     } catch (const std::exception& e) {
       set_last_send_error(std::string("failed to load HTTPS identity: ") + e.what());
+      set_send_status_message("");
       send_running_ = false;
       return;
     }
@@ -465,6 +482,7 @@ void AppService::send_worker(Device device, std::vector<std::filesystem::path> f
                                                           &send_control_,
                                                           client_credentials ? &*client_credentials : nullptr);
   set_last_send_error(result.ok ? "" : result.error);
+  set_send_status_message(result.ok ? "Send complete" : "");
   send_running_ = false;
 }
 

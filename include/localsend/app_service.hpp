@@ -37,6 +37,7 @@ struct AppServiceStatus {
   std::string alias;
   std::string fingerprint;
   std::string last_send_error;
+  std::string send_status_message;
   int port = 0;
   std::size_t device_count = 0;
   std::size_t transfer_count = 0;
@@ -94,12 +95,14 @@ public:
   void wait_for_send_idle();
   bool send_running() const { return send_running_; }
   std::string last_send_error() const;
+  std::string send_status_message() const;
 
 private:
   InfoRegisterDto make_self_info() const;
   void load_configured_manual_devices();
   bool is_self_device(const Device& device) const;
   void set_last_send_error(std::string error);
+  void set_send_status_message(std::string message);
   void discovery_loop(std::chrono::milliseconds interval, std::chrono::milliseconds scan_timeout);
   void send_worker(Device device, std::vector<std::filesystem::path> file_paths);
 #if LOCALSEND_PLATFORM_PSV
@@ -118,6 +121,7 @@ private:
   SendFilesControl send_control_;
   mutable std::mutex send_status_mutex_;
   std::string last_send_error_;
+  std::string send_status_message_;
 #if LOCALSEND_PLATFORM_PSV
   pthread_t discovery_thread_{};
   pthread_t send_thread_{};

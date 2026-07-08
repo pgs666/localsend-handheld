@@ -6,11 +6,11 @@ tests.
 
 Initial scope:
 
-- LocalSend protocol v2.1-compatible HTTP mode, with HTTPS support in desktop core and Switch shared UI builds.
+- LocalSend protocol v2.1-compatible HTTP mode, with HTTPS support in desktop core, Switch shared UI builds, and PSV shared core builds.
 - Desktop protocol prototype for protocol development and tests.
 - Nintendo Switch `.nro` HTTPS receive MVP.
 - PlayStation Vita `.vpk` borealis/GXM receive MVP.
-- Official LocalSend peers must disable Encryption for PSV and HTTP-only desktop runs. Switch builds now use HTTPS by default, but still need renewed hardware verification after the shared UI migration.
+- Official LocalSend peers must disable Encryption for HTTP-only desktop runs and the current PSV runtime default. Switch builds now use HTTPS by default, but still need renewed hardware verification after the shared UI migration.
 
 ## Layout
 
@@ -137,7 +137,7 @@ manual IP probing:
 
 ## Current Limits
 
-- Desktop core and Switch shared UI builds support HTTPS with a persistent self-signed certificate. PSV remains HTTP-only until its mbedTLS entropy source is wired and verified.
+- Desktop core and Switch shared UI builds support HTTPS with a persistent self-signed certificate. PSV now compiles and links the shared mbedTLS HTTPS core with a VitaSDK entropy source, but runtime HTTPS remains disabled until hardware testing confirms certificate generation and TLS handshakes.
 - No PIN, text messages, recursive folders, `/prepare-download`, or `/download`.
 - HTTP upload sends and receives files serially with fixed 64 KiB streaming buffers.
 - Switch now has a shared borealis UI shell build that starts the portable HTTPS receive service and discovery announcements. The older console bring-up source is still kept under `platform/switch/src/main.cpp` for reference while the UI path stabilizes, but it is not part of the default NRO build.

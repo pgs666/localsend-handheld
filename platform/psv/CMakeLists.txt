@@ -35,11 +35,21 @@ set(USE_SYSTEM_TINYXML2 OFF CACHE BOOL "" FORCE)
 set(USE_SYSTEM_TWEENY OFF CACHE BOOL "" FORCE)
 set(BRLS_UNITY_BUILD OFF CACHE BOOL "" FORCE)
 set(BRLS_RESOURCES_DIR "app0:" CACHE STRING "" FORCE)
+set(MBEDTLS_USER_CONFIG_FILE "${CMAKE_CURRENT_LIST_DIR}/src/mbedtls_vita_config.h" CACHE FILEPATH "" FORCE)
+set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
+set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
 
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../third_party/borealis/library
   ${CMAKE_CURRENT_BINARY_DIR}/borealis)
+add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../third_party/mbedtls
+  ${CMAKE_CURRENT_BINARY_DIR}/mbedtls)
 
-add_library(localsend-core-psv STATIC ${LOCALSEND_CORE_SOURCES})
+add_library(localsend-core-psv STATIC
+  ${LOCALSEND_CORE_SOURCES}
+  ${PROJECT_ROOT}/src/core/security.cpp
+  ${PROJECT_ROOT}/src/core/tls.cpp
+)
 
 set_target_properties(localsend-core-psv PROPERTIES
   CXX_STANDARD 17
@@ -51,7 +61,7 @@ target_include_directories(localsend-core-psv PUBLIC
 )
 
 target_compile_definitions(localsend-core-psv PUBLIC
-  LOCALSEND_HAS_MBEDTLS=0
+  LOCALSEND_HAS_MBEDTLS=1
   LOCALSEND_PLATFORM_PSV=1
 )
 
@@ -61,11 +71,15 @@ target_compile_options(localsend-core-psv PRIVATE
 )
 
 target_link_libraries(localsend-core-psv PUBLIC
+  mbedtls
+  mbedx509
+  mbedcrypto
   -lpthread
 )
 
 add_executable(localsend-core-psv-smoke
   src/core_smoke.cpp
+  src/psv_entropy.cpp
   src/psv_compat.cpp
 )
 
@@ -81,6 +95,7 @@ target_link_libraries(localsend-core-psv-smoke PRIVATE
 add_executable(localsend-handheld-psv
   ${LOCALSEND_HANDHELD_UI_SOURCES}
   src/main.cpp
+  src/psv_entropy.cpp
   src/psv_compat.cpp
 )
 
@@ -106,6 +121,7 @@ target_compile_options(localsend-handheld-psv PRIVATE
 target_link_libraries(localsend-handheld-psv PRIVATE
   borealis
   localsend-core-psv
+  SceLibKernel_stub
   SceNet_stub
 )
 

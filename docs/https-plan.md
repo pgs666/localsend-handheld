@@ -17,14 +17,14 @@ Implementation sequence:
 
 1. Keep HTTP mode as a debug fallback.
 2. Add dependency-free certificate fingerprint parsing in core. Done.
-3. Vendor mbedTLS at a pinned version and build it for desktop, Switch, and PSV. Done for desktop; Switch UI links devkitPro portlibs mbedTLS 2.28 through the shared core.
+3. Vendor mbedTLS at a pinned version and build it for desktop, Switch, and PSV. Done for desktop; Switch UI links devkitPro portlibs mbedTLS 2.28 through the shared core; PSV links the vendored mbedTLS build with a VitaSDK entropy shim.
 4. Add a reusable TLS stream wrapper around existing TCP sockets. Done for desktop loopback tests.
 5. Generate or load `cert.pem` and `key.pem` per platform. Done in portable core.
 6. Wrap the existing HTTP server/client stream operations with mbedTLS. Done for desktop core.
 7. Advertise `protocol: "https"` and the certificate fingerprint. Done for desktop core.
 8. Verify peer fingerprints when discovery/register/info provided one. Done for desktop core.
-9. Link mbedTLS into Switch and PSV package builds. Done for Switch NRO through shared core; PSV still needs a confirmed entropy source before enabling TLS.
-10. Add UI/config controls to enable HTTPS on handheld targets. Switch shared borealis UI now starts the portable HTTPS service by default.
+9. Link mbedTLS into Switch and PSV package builds. Done for Switch NRO through shared core and PSV VPK through vendored mbedTLS.
+10. Add UI/config controls to enable HTTPS on handheld targets. Switch shared borealis UI now starts the portable HTTPS service by default; PSV still starts in HTTP mode until the TLS path is verified on hardware.
 11. Keep certificate/key loading on the portable persistent identity loader.
 
 Expected platform paths:
@@ -37,4 +37,4 @@ Current handheld status:
 - Desktop core supports HTTPS send and receive in tests.
 - Switch shared borealis UI builds with the portable HTTPS receive/send core and persistent `cert.pem` / `key.pem` identity paths.
 - Switch HTTPS still needs renewed hardware testing after the shared UI migration.
-- PSV remains an HTTP packaging target until a VitaSDK entropy source is confirmed and wired into mbedTLS.
+- PSV builds the shared HTTPS core with vendored mbedTLS and `getentropy()`-backed `MBEDTLS_ENTROPY_HARDWARE_ALT`, but the app keeps `enable_tls=false` until true Vita hardware testing verifies certificate creation, discovery, and upload handshakes.

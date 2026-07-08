@@ -6,8 +6,9 @@
 #include <algorithm>
 #include <arpa/inet.h>
 #include <cerrno>
-#include <cstring>
 #include <cctype>
+#include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <fstream>
 #include <fcntl.h>
@@ -53,6 +54,20 @@ void close_fd(int& fd) {
     fd = -1;
   }
 }
+
+#if LOCALSEND_PLATFORM_SWITCH
+void set_fd_blocking(int fd, bool blocking) {
+  const int flags = ::fcntl(fd, F_GETFL, 0);
+  if (flags < 0) {
+    return;
+  }
+  if (blocking) {
+    ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+  } else {
+    ::fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+  }
+}
+#endif
 
 class TcpStream final : public HttpStream {
 public:
@@ -413,6 +428,17 @@ bool response_version_is_legacy_v1(const std::string& body) {
   }
 }
 
+bool debug_send_enabled() {
+  const char* value = std::getenv("LOCALSEND_DEBUG_SEND");
+  return value && std::string(value) == "1";
+}
+
+void debug_send_line(const std::string& line) {
+  if (debug_send_enabled()) {
+    std::cerr << "[send] " << line << '\n';
+  }
+}
+
 HttpResult request_raw(const std::string& host,
                        int port,
                        const std::string& method,
@@ -767,10 +793,7 @@ bool LocalSendServer::start(int requested_port) {
   }
   accept_thread_started_ = true;
 #elif LOCALSEND_PLATFORM_SWITCH
-  const int flags = ::fcntl(listen_fd_, F_GETFL, 0);
-  if (flags >= 0) {
-    ::fcntl(listen_fd_, F_SETFL, flags | O_NONBLOCK);
-  }
+  set_fd_blocking(listen_fd_, false);
 #else
   accept_thread_ = std::thread(&LocalSendServer::accept_loop, this);
 #endif
@@ -807,6 +830,7 @@ void LocalSendServer::poll_once() {
 
   const int client = ::accept(listen_fd_, nullptr, nullptr);
   if (client >= 0) {
+    set_fd_blocking(client, true);
     handle_client(client);
   }
 #endif
@@ -1131,6 +1155,7 @@ bool send_files_http(const Device& target,
   }
 
   const bool v2 = target_uses_v2_api(target);
+  debug_send_line(std::string("target api=") + (v2 ? "v2" : "v1"));
   const HttpResult prepared = request_raw(target.ip,
                                           target.port,
                                           "POST",
@@ -1139,6 +1164,7 @@ bool send_files_http(const Device& target,
                                           "application/json",
                                           target.https,
                                           target.fingerprint);
+  debug_send_line("prepare status=" + std::to_string(prepared.status) + " body=" + prepared.body);
   if (prepared.status != 200) {
     if (transfers) {
       for (const std::uint64_t transfer_id : transfer_ids) {
@@ -1201,6 +1227,7 @@ bool send_files_http(const Device& target,
       query.emplace("sessionId", response.session_id);
     }
     const std::string path = with_query(v2 ? kRouteUpload : kRouteUploadV1, query);
+    debug_send_line("upload path=" + path + " size=" + std::to_string(file.size));
     const HttpResult uploaded = post_file_raw(target.ip,
                                               target.port,
                                               path,
@@ -1214,6 +1241,7 @@ bool send_files_http(const Device& target,
                                                   transfers->set_progress(transfer_id, bytes);
                                                 }
                                               });
+    debug_send_line("upload status=" + std::to_string(uploaded.status) + " body=" + uploaded.body);
     if (uploaded.status != 200) {
       if (transfers && transfer_id != 0) {
         transfers->fail(transfer_id, "upload failed");

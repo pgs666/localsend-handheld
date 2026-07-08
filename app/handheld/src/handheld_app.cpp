@@ -38,18 +38,19 @@ struct KeyLabels {
   std::string cancel;
   std::string next_peer;
   std::string next_file;
+  std::string save_peer;
 };
 
 KeyLabels key_labels_for_platform(PlatformKind platform) {
   switch (platform) {
   case PlatformKind::Switch:
-    return {"X", "B", "Y", "R"};
+    return {"X", "B", "Y", "R", "L"};
   case PlatformKind::Psv:
-    return {"Square", "Circle", "Triangle", "R"};
+    return {"Square", "Circle", "Triangle", "R", "L"};
   case PlatformKind::Desktop:
-    return {"X", "B", "Y", "RB"};
+    return {"X", "B", "Y", "RB", "LB"};
   }
-  return {"X", "B", "Y", "RB"};
+  return {"X", "B", "Y", "RB", "LB"};
 }
 
 std::string initial_send_prompt(const KeyLabels& keys) {
@@ -84,6 +85,7 @@ struct PanelRefs {
   brls::Label* send_status = nullptr;
   brls::Label* selected_peer = nullptr;
   brls::Label* device_summary = nullptr;
+  brls::Label* manual_peers = nullptr;
   brls::Label* transfer_summary = nullptr;
 };
 
@@ -202,14 +204,15 @@ brls::View* make_panel(const HandheldAppConfig& app_config,
   root->addView(make_section("Peers"));
   root->addView(make_row("Selected", state.selected_peer_status, &refs.selected_peer));
   root->addView(make_row("Known devices", "No peers yet", &refs.device_summary));
-  root->addView(make_row("Manual peers", std::to_string(service_config.manual_devices.size())));
+  root->addView(make_row("Manual peers", std::to_string(service_config.manual_devices.size()), &refs.manual_peers));
 
   root->addView(make_section("Transfers"));
   root->addView(make_row("Recent", "No transfers yet", &refs.transfer_summary));
 
   const KeyLabels keys = key_labels_for_platform(app_config.platform);
   const std::string hint_text =
-      keys.send + " send  " + keys.next_peer + " peer  " + keys.next_file + " file  " + keys.cancel + " cancel";
+      keys.send + " send  " + keys.next_peer + " peer  " + keys.next_file + " file  " +
+      keys.save_peer + " save  " + keys.cancel + " cancel";
   auto* hint = make_label(hint_text, 20, brls::HorizontalAlign::CENTER, 780);
   hint->setMargins(24, 0, 0, 0);
   root->addView(hint);
@@ -290,6 +293,9 @@ void refresh_service_snapshot(AppService& service, RuntimeState& state, const Pa
   }
   if (refs.device_summary) {
     refs.device_summary->setText(format_device_summary(snapshot.devices, 5));
+  }
+  if (refs.manual_peers) {
+    refs.manual_peers->setText(std::to_string(service.config().manual_devices.size()));
   }
   if (refs.transfer_summary) {
     refs.transfer_summary->setText(format_transfer_summary(snapshot.transfers));
@@ -497,6 +503,40 @@ int run_handheld_app(const HandheldAppConfig& config) {
     ++state.selected_file_index;
     refresh_selected_file_status(service_config.outbox_path, state, refs);
     log_line("Selected file: " + state.selected_file_status);
+    return true;
+  });
+  frame->registerAction(action_label("Save peer", keys.save_peer), brls::BUTTON_LB, [&](brls::View*) {
+    if (!service) {
+      state.send_status = "Receive server not ready";
+      refresh_send_status(state.send_status, refs);
+      log_line("Save peer rejected: service not ready");
+      return true;
+    }
+
+    const AppSnapshot snapshot = service->snapshot();
+    const auto selected = selected_online_device(snapshot.devices, state.selected_device_index);
+    if (!selected) {
+      state.send_status = "No online peer selected";
+      refresh_send_status(state.send_status, refs);
+      log_line("Save peer rejected: no online peer");
+      return true;
+    }
+
+    const Device& device = selected->device;
+    const std::string key = service->add_manual_device(device.ip,
+                                                       device.port,
+                                                       device.https,
+                                                       device.alias,
+                                                       device.fingerprint);
+    if (service->save_config()) {
+      state.send_status = "Saved peer: " + (device.alias.empty() ? device.ip : device.alias);
+      log_line("Saved peer target=" + format_send_target_log(*selected) + " key=" + key);
+    } else {
+      state.send_status = "Save peer failed";
+      log_line("Save peer failed target=" + format_send_target_log(*selected) + " key=" + key);
+    }
+    refresh_send_status(state.send_status, refs);
+    refresh_service_snapshot(*service, state, refs);
     return true;
   });
   log_line("Using AppletFrame bottom-bar shell");

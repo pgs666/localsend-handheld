@@ -41,6 +41,23 @@ The repository CI builds handheld artifacts directly with platform SDK container
 
 Local platform builds require devkitPro/libnx or VitaSDK installed.
 
+## Deploy
+
+After a successful CI run, download artifacts with `gh run download` or use the
+existing files under `build/artifacts/<run-id>/`. Then deploy/probe devices with:
+
+```bash
+SWITCH_FTP_PASS=... ARTIFACT_DIR=build/artifacts/28927001724 ./scripts/deploy_handheld_artifacts.sh switch
+ARTIFACT_DIR=build/artifacts/28927001724 ./scripts/deploy_handheld_artifacts.sh psv
+./scripts/deploy_handheld_artifacts.sh probe
+SWITCH_FTP_PASS=... ./scripts/deploy_handheld_artifacts.sh logs
+```
+
+The script defaults to Switch FTP `192.168.31.48:5000` with user `switch`, with
+the password supplied via `SWITCH_FTP_PASS`, and PSV FTP `192.168.31.6:1337`
+without credentials. Override these with `SWITCH_HOST`, `SWITCH_FTP_PORT`,
+`PSV_HOST`, or `PSV_FTP_PORT`.
+
 ## Desktop Prototype
 
 Print a multicast-compatible JSON payload:

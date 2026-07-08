@@ -1262,6 +1262,12 @@ SendFilesResult send_files_http_detailed(const Device& target,
     }
     return body;
   };
+  auto http_failure_detail = [&compact_body](const HttpResult& response) {
+    if (response.status == 0 && response.body.empty()) {
+      return std::string("connection failed or no response");
+    }
+    return compact_body(response.body);
+  };
   auto fail_transfers = [transfers](const std::vector<std::uint64_t>& transfer_ids, const std::string& message) {
     if (!transfers) {
       return;
@@ -1372,7 +1378,7 @@ SendFilesResult send_files_http_detailed(const Device& target,
   }
   if (prepared.status != 200) {
     const std::string message = "prepare-upload failed status=" + std::to_string(prepared.status) +
-                                " body=" + compact_body(prepared.body);
+                                " body=" + http_failure_detail(prepared);
     fail_transfers(transfer_ids, message);
     return result_error(message);
   }
@@ -1458,7 +1464,7 @@ SendFilesResult send_files_http_detailed(const Device& target,
     if (uploaded.status != 200) {
       const std::string message = "upload failed file=" + file.file_name +
                                   " status=" + std::to_string(uploaded.status) +
-                                  " body=" + compact_body(uploaded.body);
+                                  " body=" + http_failure_detail(uploaded);
       if (transfers && transfer_id != 0) {
         transfers->fail(transfer_id, message);
       }

@@ -268,6 +268,17 @@ void refresh_selected_file_status(const std::filesystem::path& outbox_path, Runt
   }
 }
 
+std::string format_send_target_log(const DeviceEntry& selected) {
+  const Device& device = selected.device;
+  std::string text = selected.key;
+  text += " alias=" + (device.alias.empty() ? std::string("<empty>") : device.alias);
+  text += " ip=" + device.ip + ":" + std::to_string(device.port);
+  text += " protocol=" + std::string(device.https ? "https" : "http");
+  text += " fingerprint=" + (device.fingerprint.empty() ? std::string("<empty>") : device.fingerprint);
+  text += " source=" + std::string(to_string(selected.source));
+  return text;
+}
+
 void refresh_service_snapshot(AppService& service, RuntimeState& state, const PanelRefs& refs) {
   const AppSnapshot snapshot = service.snapshot();
   if (!selected_online_device(snapshot.devices, state.selected_device_index)) {
@@ -436,7 +447,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
     if (service->start_send_to_device(selected->key, std::vector<std::filesystem::path>{*file})) {
       const std::string peer = selected->device.alias.empty() ? selected->device.ip : selected->device.alias;
       state.send_status = "Sending " + file->filename().string() + " to " + peer;
-      log_line("Send action started file=" + file->string() + " target=" + selected->key);
+      log_line("Send action started file=" + file->string() + " target=" + format_send_target_log(*selected));
     } else {
       const std::string error = service->last_send_error();
       state.send_status = error.empty() ? "Send start failed" : "Send failed: " + error;

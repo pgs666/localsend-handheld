@@ -3,6 +3,7 @@ $(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/de
 endif
 
 TOPDIR ?= $(CURDIR)
+BASEDIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 include $(DEVKITPRO)/libnx/switch_rules
 
 TARGET := localsend-handheld
@@ -59,7 +60,7 @@ DEPENDS := $(OFILES:.o=.d)
 all: $(OUTPUT).nro
 
 $(OUTPUT).nro: $(OUTPUT).nacp $(OUTPUT).elf
-	@elf2nro $(OUTPUT).elf $@ --nacp=$(OUTPUT).nacp --icon=$(CURDIR)/assets/icon.png
+	@elf2nro $(OUTPUT).elf $@ --nacp=$(OUTPUT).nacp --icon=$(BASEDIR)assets/icon.png
 
 $(OUTPUT).nacp:
 	@nacptool --create "$(APP_TITLE)" "$(APP_AUTHOR)" "$(APP_VERSION)" $@

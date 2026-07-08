@@ -6,11 +6,13 @@
 #include "localsend/protocol.hpp"
 #include "localsend/transfer.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace localsend {
@@ -24,6 +26,7 @@ struct AppServiceOptions {
 
 struct AppServiceStatus {
   bool server_running = false;
+  bool discovery_running = false;
   bool https = false;
   std::string alias;
   std::string fingerprint;
@@ -55,6 +58,10 @@ public:
 
   bool announce_once() const;
   int refresh_discovery(std::chrono::milliseconds timeout);
+  bool start_discovery(std::chrono::milliseconds interval = std::chrono::seconds(5),
+                       std::chrono::milliseconds scan_timeout = std::chrono::milliseconds(500));
+  void stop_discovery();
+  bool discovery_running() const { return discovery_running_; }
   std::string add_manual_device(std::string ip,
                                 int port,
                                 bool https,
@@ -66,6 +73,7 @@ public:
 private:
   InfoRegisterDto make_self_info() const;
   bool is_self_device(const Device& device) const;
+  void discovery_loop(std::chrono::milliseconds interval, std::chrono::milliseconds scan_timeout);
 
   AppConfig config_;
   AppServiceOptions options_;
@@ -73,6 +81,8 @@ private:
   DeviceStore devices_;
   TransferStore transfers_;
   std::unique_ptr<LocalSendServer> server_;
+  std::atomic<bool> discovery_running_{false};
+  std::thread discovery_thread_;
 };
 
 } // namespace localsend

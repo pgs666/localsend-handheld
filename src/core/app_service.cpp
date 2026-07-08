@@ -3,6 +3,7 @@
 #include "localsend/discovery.hpp"
 #include "localsend/security.hpp"
 
+#include <algorithm>
 #include <utility>
 
 namespace localsend {
@@ -26,12 +27,14 @@ AppService::AppService(AppConfig config, AppServiceOptions options)
     : config_(std::move(config)), options_(std::move(options)), self_(make_self_info()) {}
 
 AppService::~AppService() {
+  stop_discovery();
   stop_server();
 }
 
 AppServiceStatus AppService::status() const {
   AppServiceStatus status;
   status.server_running = server_running();
+  status.discovery_running = discovery_running();
   status.https = self_.protocol == ProtocolType::Https;
   status.alias = self_.alias;
   status.fingerprint = self_.fingerprint;
@@ -109,6 +112,29 @@ int AppService::refresh_discovery(std::chrono::milliseconds timeout) {
   return added_or_updated;
 }
 
+bool AppService::start_discovery(std::chrono::milliseconds interval, std::chrono::milliseconds scan_timeout) {
+  if (discovery_running_) {
+    return true;
+  }
+  if (!config_.discovery_enabled) {
+    return false;
+  }
+
+  discovery_running_ = true;
+  discovery_thread_ = std::thread(&AppService::discovery_loop, this, interval, scan_timeout);
+  return true;
+}
+
+void AppService::stop_discovery() {
+  if (!discovery_running_) {
+    return;
+  }
+  discovery_running_ = false;
+  if (discovery_thread_.joinable()) {
+    discovery_thread_.join();
+  }
+}
+
 std::string AppService::add_manual_device(std::string ip,
                                           int port,
                                           bool https,
@@ -149,6 +175,25 @@ bool AppService::is_self_device(const Device& device) const {
     return true;
   }
   return device.port == self_.port && device.alias == self_.alias;
+}
+
+void AppService::discovery_loop(std::chrono::milliseconds interval, std::chrono::milliseconds scan_timeout) {
+  const auto bounded_interval = std::max(interval, std::chrono::milliseconds(50));
+  const auto bounded_timeout = std::max(scan_timeout, std::chrono::milliseconds(1));
+
+  while (discovery_running_) {
+    announce_once();
+    refresh_discovery(bounded_timeout);
+
+    const auto sleep_step = std::chrono::milliseconds(50);
+    auto slept = std::chrono::milliseconds(0);
+    while (discovery_running_ && slept < bounded_interval) {
+      const auto remaining = bounded_interval - slept;
+      const auto current_sleep = std::min(sleep_step, remaining);
+      std::this_thread::sleep_for(current_sleep);
+      slept += current_sleep;
+    }
+  }
 }
 
 } // namespace localsend

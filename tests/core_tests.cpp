@@ -532,6 +532,8 @@ void test_app_service_status_and_manual_device() {
   require(service.self_info().device_model == "Service test", "service model failed");
   require(!service.announce_once(), "disabled discovery should not announce");
   require(service.refresh_discovery(std::chrono::milliseconds(1)) == 0, "disabled discovery should not refresh");
+  require(!service.start_discovery(std::chrono::milliseconds(10), std::chrono::milliseconds(1)), "disabled discovery loop should not start");
+  require(!service.status().discovery_running, "disabled discovery loop should stay stopped");
 
   const std::string key = service.add_manual_device("127.0.0.1", 53317, false, "Manual", "");
   require(key == "endpoint:127.0.0.1:53317", "service manual key failed");
@@ -540,6 +542,26 @@ void test_app_service_status_and_manual_device() {
   const auto entry = service.devices().get(key);
   require(entry.has_value(), "service manual device missing");
   require(entry->source == localsend::DeviceSource::Manual, "service manual source failed");
+}
+
+void test_app_service_discovery_loop_lifecycle() {
+  auto config = localsend::default_config(localsend::PlatformKind::Desktop);
+  config.alias = "Discovery Service";
+  config.port = 0;
+  config.discovery_enabled = true;
+
+  localsend::AppServiceOptions options;
+  options.enable_tls = false;
+  localsend::AppService service(config, options);
+
+  require(service.start_discovery(std::chrono::milliseconds(20), std::chrono::milliseconds(1)), "discovery loop should start");
+  require(service.discovery_running(), "discovery loop running flag failed");
+  require(service.status().discovery_running, "discovery loop status failed");
+  require(service.start_discovery(std::chrono::milliseconds(20), std::chrono::milliseconds(1)), "discovery loop second start should be idempotent");
+  std::this_thread::sleep_for(std::chrono::milliseconds(60));
+  service.stop_discovery();
+  require(!service.discovery_running(), "discovery loop should stop");
+  require(!service.status().discovery_running, "discovery loop stopped status failed");
 }
 
 void test_app_service_send_to_manual_device() {
@@ -1160,6 +1182,7 @@ int main() {
     test_default_config_paths();
     test_config_round_trip();
     test_app_service_status_and_manual_device();
+    test_app_service_discovery_loop_lifecycle();
     test_app_service_send_to_manual_device();
     test_safe_filename();
     test_unique_destination();

@@ -1,5 +1,12 @@
 #include <switch.h>
 
+#include <mbedtls/ctr_drbg.h>
+#include <mbedtls/entropy.h>
+#include <mbedtls/net_sockets.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/sha256.h>
+#include <mbedtls/x509_crt.h>
+
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstdlib>
@@ -52,9 +59,29 @@ int g_sent_files = 0;
 char g_status[256] = "Starting";
 int g_announcements = 0;
 
+ssize_t recv_retry(int fd, char* buffer, size_t size);
+
 struct ClientHttpResult {
   int status = 0;
   std::string body;
+  std::string peer_fingerprint;
+};
+
+struct ClientConnection {
+  int fd = -1;
+  bool tls = false;
+  bool ssl_ready = false;
+  mbedtls_ssl_context ssl;
+  mbedtls_ssl_config config;
+  mbedtls_entropy_context entropy;
+  mbedtls_ctr_drbg_context ctr_drbg;
+
+  ClientConnection() {
+    mbedtls_ssl_init(&ssl);
+    mbedtls_ssl_config_init(&config);
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&ctr_drbg);
+  }
 };
 
 void append_log(const std::string& line) {
@@ -389,6 +416,118 @@ bool send_all(int fd, const char* data, size_t size) {
   return true;
 }
 
+int tls_send(void* ctx, const unsigned char* buffer, size_t size) {
+  const int fd = *static_cast<int*>(ctx);
+  const ssize_t sent = send(fd, buffer, size, 0);
+  if (sent < 0) {
+    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+      return MBEDTLS_ERR_SSL_WANT_WRITE;
+    }
+    return MBEDTLS_ERR_NET_SEND_FAILED;
+  }
+  return static_cast<int>(sent);
+}
+
+int tls_recv(void* ctx, unsigned char* buffer, size_t size) {
+  const int fd = *static_cast<int*>(ctx);
+  const ssize_t got = recv(fd, buffer, size, 0);
+  if (got < 0) {
+    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+      return MBEDTLS_ERR_SSL_WANT_READ;
+    }
+    return MBEDTLS_ERR_NET_RECV_FAILED;
+  }
+  if (got == 0) {
+    return MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY;
+  }
+  return static_cast<int>(got);
+}
+
+bool tls_retryable(int result) {
+  return result == MBEDTLS_ERR_SSL_WANT_READ || result == MBEDTLS_ERR_SSL_WANT_WRITE;
+}
+
+std::string hex_encode(const unsigned char* data, size_t size) {
+  static constexpr char kHex[] = "0123456789abcdef";
+  std::string out;
+  out.reserve(size * 2);
+  for (size_t i = 0; i < size; ++i) {
+    out.push_back(kHex[data[i] >> 4]);
+    out.push_back(kHex[data[i] & 0x0f]);
+  }
+  return out;
+}
+
+std::string lowercase_ascii(std::string value) {
+  for (char& c : value) {
+    if (c >= 'A' && c <= 'Z') {
+      c = static_cast<char>(c - 'A' + 'a');
+    }
+  }
+  return value;
+}
+
+std::string tls_peer_fingerprint(ClientConnection& connection) {
+  const mbedtls_x509_crt* peer = mbedtls_ssl_get_peer_cert(&connection.ssl);
+  if (!peer || !peer->raw.p || peer->raw.len == 0) {
+    return "";
+  }
+  unsigned char digest[32] = {};
+  if (mbedtls_sha256(peer->raw.p, peer->raw.len, digest, 0) != 0) {
+    return "";
+  }
+  return hex_encode(digest, sizeof(digest));
+}
+
+int stream_read(ClientConnection& connection, char* buffer, size_t size) {
+  if (!connection.tls) {
+    return static_cast<int>(recv_retry(connection.fd, buffer, size));
+  }
+  while (true) {
+    const int got = mbedtls_ssl_read(&connection.ssl, reinterpret_cast<unsigned char*>(buffer), size);
+    if (tls_retryable(got)) {
+      svcSleepThread(1'000'000);
+      continue;
+    }
+    return got;
+  }
+}
+
+bool stream_send_all(ClientConnection& connection, const char* data, size_t size) {
+  if (!connection.tls) {
+    return send_all(connection.fd, data, size);
+  }
+  while (size > 0) {
+    const int sent = mbedtls_ssl_write(&connection.ssl, reinterpret_cast<const unsigned char*>(data), size);
+    if (tls_retryable(sent)) {
+      svcSleepThread(1'000'000);
+      continue;
+    }
+    if (sent <= 0) {
+      return false;
+    }
+    data += sent;
+    size -= static_cast<size_t>(sent);
+  }
+  return true;
+}
+
+void close_client_connection(ClientConnection& connection) {
+  if (connection.tls && connection.ssl_ready) {
+    while (tls_retryable(mbedtls_ssl_close_notify(&connection.ssl))) {
+      svcSleepThread(1'000'000);
+    }
+  }
+  if (connection.fd >= 0) {
+    close(connection.fd);
+    connection.fd = -1;
+  }
+  mbedtls_ctr_drbg_free(&connection.ctr_drbg);
+  mbedtls_entropy_free(&connection.entropy);
+  mbedtls_ssl_free(&connection.ssl);
+  mbedtls_ssl_config_free(&connection.config);
+}
+
 void set_blocking(int fd) {
   const int flags = fcntl(fd, F_GETFL, 0);
   if (flags >= 0) {
@@ -577,6 +716,120 @@ ClientHttpResult read_client_response(int fd) {
   return result;
 }
 
+bool read_headers_stream(ClientConnection& connection, std::string& request, std::string& initial_body) {
+  char chunk[4096];
+  while (request.find("\r\n\r\n") == std::string::npos && request.size() < 1024 * 1024) {
+    const int got = stream_read(connection, chunk, sizeof(chunk));
+    if (got <= 0) {
+      return false;
+    }
+    request.append(chunk, static_cast<size_t>(got));
+  }
+  const size_t split = request.find("\r\n\r\n");
+  if (split == std::string::npos) {
+    return false;
+  }
+  initial_body = request.substr(split + 4);
+  request.resize(split + 4);
+  return true;
+}
+
+std::string read_body_string_stream(ClientConnection& connection, std::string body, size_t length) {
+  char chunk[4096];
+  while (body.size() < length) {
+    const int got = stream_read(connection, chunk, sizeof(chunk));
+    if (got <= 0) {
+      break;
+    }
+    body.append(chunk, static_cast<size_t>(got));
+  }
+  if (body.size() > length) {
+    body.resize(length);
+  }
+  return body;
+}
+
+bool read_chunked_body_string_stream(ClientConnection& connection, const std::string& initial_body, std::string& body) {
+  std::string buffer = initial_body;
+  size_t pos = 0;
+  body.clear();
+
+  auto fill = [&](size_t need) {
+    char chunk[4096];
+    while (buffer.size() - pos < need) {
+      const int got = stream_read(connection, chunk, sizeof(chunk));
+      if (got <= 0) {
+        return false;
+      }
+      buffer.append(chunk, static_cast<size_t>(got));
+    }
+    return true;
+  };
+
+  while (true) {
+    size_t line_end = buffer.find("\r\n", pos);
+    while (line_end == std::string::npos) {
+      if (!fill(buffer.size() - pos + 1)) {
+        return false;
+      }
+      line_end = buffer.find("\r\n", pos);
+    }
+
+    std::string size_text = buffer.substr(pos, line_end - pos);
+    const size_t semicolon = size_text.find(';');
+    if (semicolon != std::string::npos) {
+      size_text.resize(semicolon);
+    }
+
+    char* end = nullptr;
+    const size_t chunk_size = static_cast<size_t>(std::strtoull(size_text.c_str(), &end, 16));
+    if (end == size_text.c_str()) {
+      return false;
+    }
+
+    pos = line_end + 2;
+    if (chunk_size == 0) {
+      return true;
+    }
+
+    if (!fill(chunk_size + 2)) {
+      return false;
+    }
+    body.append(buffer.data() + pos, chunk_size);
+    pos += chunk_size;
+    if (pos + 1 >= buffer.size() || buffer[pos] != '\r' || buffer[pos + 1] != '\n') {
+      return false;
+    }
+    pos += 2;
+
+    if (pos > 64 * 1024) {
+      buffer.erase(0, pos);
+      pos = 0;
+    }
+  }
+}
+
+ClientHttpResult read_client_response_stream(ClientConnection& connection) {
+  ClientHttpResult result;
+  std::string headers;
+  std::string initial_body;
+  if (!read_headers_stream(connection, headers, initial_body)) {
+    return result;
+  }
+  result.status = status_code_from_headers(headers);
+  if (transfer_encoding_chunked(headers)) {
+    if (!read_chunked_body_string_stream(connection, initial_body, result.body)) {
+      result.body.clear();
+    }
+  } else {
+    result.body = read_body_string_stream(connection, initial_body, content_length(headers));
+  }
+  if (connection.tls) {
+    result.peer_fingerprint = tls_peer_fingerprint(connection);
+  }
+  return result;
+}
+
 int connect_tcp(const std::string& ip, int port) {
   const int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) {
@@ -602,10 +855,61 @@ int connect_tcp(const std::string& ip, int port) {
   return fd;
 }
 
-ClientHttpResult http_post_json(const std::string& ip, int port, const char* path, const std::string& body) {
+bool connect_client(const std::string& ip, int port, bool use_tls, ClientConnection& connection) {
+  connection.fd = connect_tcp(ip, port);
+  if (connection.fd < 0) {
+    return false;
+  }
+  connection.tls = use_tls;
+  if (!use_tls) {
+    return true;
+  }
+
+  const char* personalization = "localsend-switch-client";
+  int result = mbedtls_ctr_drbg_seed(&connection.ctr_drbg,
+                                     mbedtls_entropy_func,
+                                     &connection.entropy,
+                                     reinterpret_cast<const unsigned char*>(personalization),
+                                     std::strlen(personalization));
+  if (result != 0) {
+    append_log("tls seed failed result=" + std::to_string(result));
+    close_client_connection(connection);
+    return false;
+  }
+
+  result = mbedtls_ssl_config_defaults(&connection.config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
+  if (result != 0) {
+    append_log("tls config failed result=" + std::to_string(result));
+    close_client_connection(connection);
+    return false;
+  }
+  mbedtls_ssl_conf_authmode(&connection.config, MBEDTLS_SSL_VERIFY_NONE);
+  mbedtls_ssl_conf_rng(&connection.config, mbedtls_ctr_drbg_random, &connection.ctr_drbg);
+
+  result = mbedtls_ssl_setup(&connection.ssl, &connection.config);
+  if (result != 0) {
+    append_log("tls setup failed result=" + std::to_string(result));
+    close_client_connection(connection);
+    return false;
+  }
+  connection.ssl_ready = true;
+  mbedtls_ssl_set_bio(&connection.ssl, &connection.fd, tls_send, tls_recv, nullptr);
+
+  while ((result = mbedtls_ssl_handshake(&connection.ssl)) != 0) {
+    if (!tls_retryable(result)) {
+      append_log("tls handshake failed result=" + std::to_string(result));
+      close_client_connection(connection);
+      return false;
+    }
+    svcSleepThread(1'000'000);
+  }
+  return true;
+}
+
+ClientHttpResult http_post_json(const std::string& ip, int port, const char* path, const std::string& body, bool use_tls = false) {
   ClientHttpResult result;
-  const int fd = connect_tcp(ip, port);
-  if (fd < 0) {
+  ClientConnection connection;
+  if (!connect_client(ip, port, use_tls, connection)) {
     return result;
   }
 
@@ -617,17 +921,17 @@ ClientHttpResult http_post_json(const std::string& ip, int port, const char* pat
                 ip.c_str(),
                 port,
                 body.size());
-  if (send_all(fd, header, std::strlen(header)) && send_all(fd, body.data(), body.size())) {
-    result = read_client_response(fd);
+  if (stream_send_all(connection, header, std::strlen(header)) && stream_send_all(connection, body.data(), body.size())) {
+    result = read_client_response_stream(connection);
   }
-  close(fd);
+  close_client_connection(connection);
   return result;
 }
 
-ClientHttpResult http_get(const std::string& ip, int port, const char* path) {
+ClientHttpResult http_get(const std::string& ip, int port, const char* path, bool use_tls = false) {
   ClientHttpResult result;
-  const int fd = connect_tcp(ip, port);
-  if (fd < 0) {
+  ClientConnection connection;
+  if (!connect_client(ip, port, use_tls, connection)) {
     return result;
   }
 
@@ -638,22 +942,22 @@ ClientHttpResult http_get(const std::string& ip, int port, const char* path) {
                 path,
                 ip.c_str(),
                 port);
-  if (send_all(fd, header, std::strlen(header))) {
-    result = read_client_response(fd);
+  if (stream_send_all(connection, header, std::strlen(header))) {
+    result = read_client_response_stream(connection);
   }
-  close(fd);
+  close_client_connection(connection);
   return result;
 }
 
-ClientHttpResult http_post_file(const std::string& ip, int port, const std::string& path, const std::string& file_path, size_t size) {
+ClientHttpResult http_post_file(const std::string& ip, int port, const std::string& path, const std::string& file_path, size_t size, bool use_tls = false) {
   ClientHttpResult result;
   FILE* in = std::fopen(file_path.c_str(), "rb");
   if (!in) {
     return result;
   }
 
-  const int fd = connect_tcp(ip, port);
-  if (fd < 0) {
+  ClientConnection connection;
+  if (!connect_client(ip, port, use_tls, connection)) {
     std::fclose(in);
     return result;
   }
@@ -667,12 +971,12 @@ ClientHttpResult http_post_file(const std::string& ip, int port, const std::stri
                 port,
                 size);
 
-  bool ok = send_all(fd, header, std::strlen(header));
+  bool ok = stream_send_all(connection, header, std::strlen(header));
   char* buffer = static_cast<char*>(std::malloc(kBufferSize));
   while (ok) {
     const size_t got = std::fread(buffer, 1, kBufferSize, in);
     if (got > 0) {
-      ok = send_all(fd, buffer, got);
+      ok = stream_send_all(connection, buffer, got);
     }
     if (got < kBufferSize) {
       break;
@@ -682,9 +986,9 @@ ClientHttpResult http_post_file(const std::string& ip, int port, const std::stri
   std::fclose(in);
 
   if (ok) {
-    result = read_client_response(fd);
+    result = read_client_response_stream(connection);
   }
-  close(fd);
+  close_client_connection(connection);
   return result;
 }
 
@@ -915,6 +1219,7 @@ void send_outbox_file() {
       "\",\"size\":" + std::to_string(file_size) + ",\"fileType\":\"application/octet-stream\"}}}";
 
   bool use_v2 = true;
+  bool use_tls = false;
   ClientHttpResult info = http_get(ip, port, "/api/localsend/v2/info");
   if (info.status != 200) {
     append_log("send v2 info failed status=" + std::to_string(info.status) + " body=" + info.body.substr(0, 256));
@@ -922,16 +1227,36 @@ void send_outbox_file() {
     use_v2 = false;
   }
   if (info.status != 200) {
+    append_log("send http info failed; trying https");
+    use_tls = true;
+    use_v2 = true;
+    info = http_get(ip, port, "/api/localsend/v2/info", true);
+    if (info.status != 200) {
+      append_log("send https v2 info failed status=" + std::to_string(info.status) + " body=" + info.body.substr(0, 256));
+      info = http_get(ip, port, "/api/localsend/v1/info", true);
+      use_v2 = false;
+    }
+  }
+  if (info.status != 200) {
     std::snprintf(g_status, sizeof(g_status), "Send info failed: %d", info.status);
     append_log("send info failed status=" + std::to_string(info.status) + " body=" + info.body.substr(0, 256));
     return;
   }
   const std::string target_version = find_json_string(info.body, "version", use_v2 ? "2.1" : "1.0");
-  append_log("send target info version=" + target_version + " v2=" + std::to_string(use_v2));
+  const std::string advertised_fingerprint = lowercase_ascii(find_json_string(info.body, "fingerprint", ""));
+  if (use_tls && !advertised_fingerprint.empty() && !info.peer_fingerprint.empty() && advertised_fingerprint != info.peer_fingerprint) {
+    std::snprintf(g_status, sizeof(g_status), "Send failed: TLS fingerprint");
+    append_log("send tls fingerprint mismatch advertised=" + advertised_fingerprint + " peer=" + info.peer_fingerprint);
+    return;
+  }
+  append_log("send target info version=" + target_version +
+             " v2=" + std::to_string(use_v2) +
+             " tls=" + std::to_string(use_tls) +
+             " fingerprint=" + (info.peer_fingerprint.empty() ? std::string("<none>") : info.peer_fingerprint));
 
   std::snprintf(g_status, sizeof(g_status), "Preparing send: %s", file_name.c_str());
   append_log("send prepare target=" + ip + ":" + std::to_string(port) + " file=" + file_path + " size=" + std::to_string(file_size));
-  const ClientHttpResult prepared = http_post_json(ip, port, use_v2 ? "/api/localsend/v2/prepare-upload" : "/api/localsend/v1/send-request", prepare);
+  const ClientHttpResult prepared = http_post_json(ip, port, use_v2 ? "/api/localsend/v2/prepare-upload" : "/api/localsend/v1/send-request", prepare, use_tls);
   if (prepared.status != 200) {
     std::snprintf(g_status, sizeof(g_status), "Send prepare failed: %d", prepared.status);
     append_log("send prepare failed status=" + std::to_string(prepared.status) + " body=" + prepared.body.substr(0, 512));
@@ -951,7 +1276,7 @@ void send_outbox_file() {
                                       ? "/api/localsend/v2/upload?sessionId=" + session_id + "&fileId=0&token=" + token
                                       : "/api/localsend/v1/send?fileId=0&token=" + token;
   std::snprintf(g_status, sizeof(g_status), "Sending: %s", file_name.c_str());
-  const ClientHttpResult uploaded = http_post_file(ip, port, upload_path, file_path, file_size);
+  const ClientHttpResult uploaded = http_post_file(ip, port, upload_path, file_path, file_size, use_tls);
   if (uploaded.status != 200) {
     std::snprintf(g_status, sizeof(g_status), "Send upload failed: %d", uploaded.status);
     append_log("send upload failed status=" + std::to_string(uploaded.status) + " body=" + uploaded.body.substr(0, 512));

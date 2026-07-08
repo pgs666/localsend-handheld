@@ -11,6 +11,7 @@ BUILD := build
 SOURCES := src
 DATA :=
 INCLUDES := include
+PORTLIBS := $(DEVKITPRO)/portlibs/switch
 
 APP_TITLE := LocalSend Handheld
 APP_AUTHOR := pgs666
@@ -22,8 +23,8 @@ CFLAGS := -g -Wall -O2 -ffunction-sections
 CFLAGS += $(ARCH) $(DEFINES)
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
 ASFLAGS := -g $(ARCH)
-LDFLAGS = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -L$(DEVKITPRO)/libnx/lib -Wl,-Map,$(notdir $*.map)
-LIBS := -lnx
+LDFLAGS = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -L$(PORTLIBS)/lib -L$(DEVKITPRO)/libnx/lib -Wl,-Map,$(notdir $*.map)
+LIBS := -lmbedtls -lmbedx509 -lmbedcrypto -lnx
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))
 export OUTPUT := $(CURDIR)/$(TARGET)
@@ -37,6 +38,7 @@ SFILES := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 export OFILES := $(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
 export INCLUDE := $(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
   $(foreach dir,$(LIBDIRS),-I$(dir)/include) \
+  -I$(PORTLIBS)/include \
   -I$(DEVKITPRO)/libnx/include \
   -I$(CURDIR)/$(BUILD)
 

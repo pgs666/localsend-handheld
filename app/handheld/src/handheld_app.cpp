@@ -111,7 +111,7 @@ brls::Box* make_panel(const HandheldAppConfig& config, const RuntimeState& state
 
   const std::string hint_text =
       config.platform == PlatformKind::Switch
-          ? "A: start receive server   X: announce discovery"
+          ? "Receive server starts after the UI is stable"
           : "Receive server starts automatically";
   auto* hint = make_label(hint_text, 20, brls::HorizontalAlign::CENTER, 780);
   hint->setMargins(24, 0, 0, 0);
@@ -126,6 +126,12 @@ void refresh_panel(const RuntimeState& state, const PanelRefs& refs) {
   }
   if (refs.discovery_status && !state.server_started) {
     refs.discovery_status->setText("Server not started");
+  }
+}
+
+void refresh_discovery_status(const std::string& text, const PanelRefs& refs) {
+  if (refs.discovery_status) {
+    refs.discovery_status->setText(text);
   }
 }
 
@@ -204,8 +210,8 @@ int run_handheld_app(const HandheldAppConfig& config) {
   log_line("Detected IP: " + state.ip);
 
   std::unique_ptr<AppService> service;
-  const bool auto_start_service = config.platform != PlatformKind::Switch;
-  if (auto_start_service) {
+  const bool start_service_before_ui = config.platform != PlatformKind::Switch;
+  if (start_service_before_ui) {
     try {
       service = start_service(config, state);
     } catch (const std::exception& e) {
@@ -216,54 +222,20 @@ int run_handheld_app(const HandheldAppConfig& config) {
       log_line(state.server_status);
     }
   } else {
-    log_line("Switch startup: receive server deferred until BUTTON_A");
+    state.server_status = "Waiting for UI";
+    log_line("Switch startup: receive server deferred until first stable frames");
   }
 
   PanelRefs refs;
   auto* panel = make_panel(config, state, refs);
   refresh_panel(state, refs);
 
-  panel->registerAction("Start", brls::BUTTON_A, [&](brls::View*) {
-    if (service && state.server_started) {
-      log_line("Start requested; receive server already running");
-      return true;
-    }
-    try {
-      service = start_service(config, state);
-    } catch (const std::exception& e) {
-      state.server_status = std::string("Exception: ") + e.what();
-      log_line(state.server_status);
-    } catch (...) {
-      state.server_status = "Unknown exception";
-      log_line(state.server_status);
-    }
-    refresh_panel(state, refs);
-    return true;
-  });
-
-  panel->registerAction("Announce", brls::BUTTON_X, [&](brls::View*) {
-    if (!service || !state.server_started) {
-      log_line("Manual discovery announcement skipped; server not started");
-      if (refs.discovery_status) {
-        refs.discovery_status->setText("Server not started");
-      }
-      return true;
-    }
-    const bool ok = service->announce_once();
-    log_line(ok ? "Manual discovery announcement sent" : "Manual discovery announcement failed");
-    if (refs.discovery_status) {
-      refs.discovery_status->setText(ok ? "Last announce sent" : "Last announce failed");
-    }
-    return true;
-  });
-
-  auto* frame = new brls::AppletFrame(panel);
-  frame->setTitle("LocalSend Handheld");
   log_line("Pushing activity");
-  brls::Application::pushActivity(new brls::Activity(frame));
+  brls::Application::pushActivity(new brls::Activity(panel));
   log_line("Activity pushed; entering main loop");
 
   auto next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  auto deferred_start = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   int loop_count = 0;
   while (brls::Application::mainLoop()) {
     if (++loop_count == 1) {
@@ -271,12 +243,28 @@ int run_handheld_app(const HandheldAppConfig& config) {
     } else if (loop_count % 600 == 0) {
       log_line("mainLoop alive");
     }
+
+    if (!service && !state.server_started && config.platform == PlatformKind::Switch &&
+        std::chrono::steady_clock::now() >= deferred_start) {
+      log_line("Deferred Switch receive server start");
+      try {
+        service = start_service(config, state);
+      } catch (const std::exception& e) {
+        state.server_status = std::string("Exception: ") + e.what();
+        log_line(state.server_status);
+      } catch (...) {
+        state.server_status = "Unknown exception";
+        log_line(state.server_status);
+      }
+      refresh_panel(state, refs);
+      refresh_discovery_status(state.server_started ? "Waiting for periodic announce" : "Server not started", refs);
+      next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    }
+
     if (service && state.server_started && config.enable_discovery &&
         std::chrono::steady_clock::now() >= next_announce) {
       const bool ok = service->announce_once();
-      if (refs.discovery_status) {
-        refs.discovery_status->setText(ok ? "Periodic announce sent" : "Periodic announce failed");
-      }
+      refresh_discovery_status(ok ? "Periodic announce sent" : "Periodic announce failed", refs);
       next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     }
   }

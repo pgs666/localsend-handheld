@@ -570,6 +570,50 @@ void test_app_service_discovery_loop_lifecycle() {
   require(!service.status().discovery_running, "discovery loop stopped status failed");
 }
 
+void test_app_service_update_and_save_config() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-service-config-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  auto config = localsend::default_config(localsend::PlatformKind::Desktop);
+  config.alias = "Before";
+  config.port = 0;
+  config.config_path = dir / "config.json";
+  config.inbox_path = dir / "inbox";
+  config.discovery_enabled = true;
+
+  localsend::AppServiceOptions options;
+  options.enable_tls = false;
+  localsend::AppService service(config, options);
+
+  auto updated = config;
+  updated.alias = "After";
+  updated.port = 43210;
+  updated.discovery_enabled = false;
+  updated.auto_accept = true;
+  require(service.update_config(updated), "service config update failed");
+  require(service.config().alias == "After", "service config alias update failed");
+  require(service.self_info().alias == "After", "service self alias update failed");
+  require(service.self_info().port == 43210, "service self port update failed");
+  require(!service.config().discovery_enabled, "service discovery config update failed");
+  require(service.save_config(), "service config save failed");
+
+  const auto loaded = localsend::load_config(localsend::PlatformKind::Desktop, updated.config_path);
+  require(loaded.alias == "After", "service saved alias failed");
+  require(loaded.port == 43210, "service saved port failed");
+  require(!loaded.discovery_enabled, "service saved discovery failed");
+  require(loaded.auto_accept, "service saved auto accept failed");
+
+  require(service.start_server(), "service config test server failed to start");
+  auto rejected = updated;
+  rejected.alias = "Rejected";
+  require(!service.update_config(rejected), "running service config update should be rejected");
+  require(service.config().alias == "After", "rejected config should not apply");
+  service.stop_server();
+
+  std::filesystem::remove_all(dir);
+}
+
 void test_app_service_send_to_manual_device() {
   const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-service-tests";
   const auto inbox = dir / "inbox";
@@ -1238,6 +1282,7 @@ int main() {
     test_config_round_trip();
     test_app_service_status_and_manual_device();
     test_app_service_discovery_loop_lifecycle();
+    test_app_service_update_and_save_config();
     test_app_service_send_to_manual_device();
     test_app_service_async_send_to_manual_device();
     test_safe_filename();

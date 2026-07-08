@@ -55,6 +55,9 @@ public:
   const InfoRegisterDto& self_info() const { return self_; }
   AppServiceStatus status() const;
   AppSnapshot snapshot() const;
+  bool update_config(AppConfig config);
+  bool save_config() const;
+  bool save_config_as(const std::filesystem::path& path) const;
 
   DeviceStore& devices() { return devices_; }
   const DeviceStore& devices() const { return devices_; }

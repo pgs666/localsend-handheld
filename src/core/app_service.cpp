@@ -55,6 +55,29 @@ AppSnapshot AppService::snapshot() const {
   return snapshot;
 }
 
+bool AppService::update_config(AppConfig config) {
+  if (server_running() || discovery_running() || send_running()) {
+    return false;
+  }
+
+  config_ = std::move(config);
+  self_ = make_self_info();
+  return true;
+}
+
+bool AppService::save_config() const {
+  return save_config_as(config_.config_path);
+}
+
+bool AppService::save_config_as(const std::filesystem::path& path) const {
+  try {
+    localsend::save_config(config_, path);
+    return true;
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
 bool AppService::start_server() {
   if (server_) {
     return true;

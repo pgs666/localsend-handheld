@@ -16,6 +16,7 @@ namespace localsend::handheld {
 namespace {
 
 constexpr const char* kProtocol = "LocalSend protocol 2.1";
+constexpr const char* kUiBuild = "switch-poll-server-applet-frame";
 
 FILE* g_log = nullptr;
 
@@ -91,6 +92,7 @@ brls::Box* make_panel(const HandheldAppConfig& config, const RuntimeState& state
 
   root->addView(make_section("Runtime"));
   root->addView(make_row("Renderer", config.renderer));
+  root->addView(make_row("UI build", kUiBuild));
   root->addView(make_row("Local IP", state.ip));
   root->addView(make_row("Local port", std::to_string(state.server_port)));
   root->addView(make_row("Protocol", kProtocol));
@@ -186,6 +188,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
   brls::Logger::setLogOutput(g_log);
   brls::Platform::APP_LOCALE_DEFAULT = brls::LOCALE_AUTO;
   log_line("LocalSend Handheld boot");
+  log_line(std::string("UI build: ") + kUiBuild);
 
   log_line("Calling borealis init");
   if (!brls::Application::init()) {
@@ -232,6 +235,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
 
   auto* frame = new brls::AppletFrame(panel);
   frame->setTitle("LocalSend Handheld");
+  log_line("Using AppletFrame bottom-bar shell");
   log_line("Pushing activity");
   brls::Application::pushActivity(new brls::Activity(frame));
   log_line("Activity pushed; entering main loop");

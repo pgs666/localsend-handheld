@@ -25,13 +25,21 @@ include("${DEVKITPRO}/cmake/Switch.cmake" REQUIRED)
 project(localsend_handheld_switch_ui C CXX)
 
 set(PROJECT_ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
+set(BOREALIS_LIBRARY ${PROJECT_ROOT}/third_party/borealis/library)
 include(${PROJECT_ROOT}/cmake/LocalSendCoreSources.cmake)
 include(${PROJECT_ROOT}/cmake/LocalSendHandheldUi.cmake)
 set(APP_TITLE "LocalSend Handheld")
 set(APP_AUTHOR "pgs666")
 set(APP_VERSION "0.1.0")
 
-add_subdirectory(${PROJECT_ROOT}/third_party/borealis/library
+if(USE_DEKO3D)
+  find_program(NX_UAM_EXE NAMES uam HINTS "${DEVKITPRO}/tools/bin")
+  if(NOT NX_UAM_EXE)
+    message(FATAL_ERROR "Could not find uam: install libuam before building the Switch deko3d target")
+  endif()
+endif()
+
+add_subdirectory(${BOREALIS_LIBRARY}
   ${CMAKE_CURRENT_BINARY_DIR}/borealis)
 
 add_library(localsend-core-switch-ui STATIC ${LOCALSEND_CORE_SOURCES})
@@ -82,8 +90,13 @@ target_link_libraries(localsend-handheld-switch-ui PRIVATE
 
 add_custom_target(localsend-handheld-switch-ui.nro ALL DEPENDS localsend-handheld-switch-ui
   COMMAND ${NX_NACPTOOL_EXE} --create "${APP_TITLE}" "${APP_AUTHOR}" "${APP_VERSION}" localsend-handheld-switch-ui.nacp
+  COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_CURRENT_BINARY_DIR}/resources
   COMMAND ${CMAKE_COMMAND} -E copy_directory ${PROJECT_ROOT}/third_party/borealis/resources ${CMAKE_CURRENT_BINARY_DIR}/resources
   COMMAND ${CMAKE_COMMAND} -E remove_directory ${CMAKE_CURRENT_BINARY_DIR}/resources/font
+  COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/resources/shaders
+  COMMAND ${NX_UAM_EXE} -s vert -o ${CMAKE_CURRENT_BINARY_DIR}/resources/shaders/fill_vsh.dksh ${BOREALIS_LIBRARY}/lib/extern/nanovg/deko3d/shaders/fill_vsh.glsl
+  COMMAND ${NX_UAM_EXE} -s frag -o ${CMAKE_CURRENT_BINARY_DIR}/resources/shaders/fill_aa_fsh.dksh ${BOREALIS_LIBRARY}/lib/extern/nanovg/deko3d/shaders/fill_aa_fsh.glsl
+  COMMAND ${NX_UAM_EXE} -s frag -o ${CMAKE_CURRENT_BINARY_DIR}/resources/shaders/fill_fsh.dksh ${BOREALIS_LIBRARY}/lib/extern/nanovg/deko3d/shaders/fill_fsh.glsl
   COMMAND ${NX_ELF2NRO_EXE} localsend-handheld-switch-ui.elf localsend-handheld.nro
           --icon=${CMAKE_CURRENT_LIST_DIR}/assets/icon.png
           --nacp=localsend-handheld-switch-ui.nacp

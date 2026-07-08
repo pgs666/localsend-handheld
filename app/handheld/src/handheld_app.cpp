@@ -42,6 +42,7 @@ struct RuntimeState {
   std::string discovery_status = "Not started";
   std::string file_browser_status = "Not checked";
   std::string send_status = "Select a peer, then press X";
+  std::string last_send_error;
   std::optional<std::size_t> selected_device_index;
   std::string selected_peer_status = "No online peer selected";
 };
@@ -208,12 +209,16 @@ void refresh_service_snapshot(AppService& service, RuntimeState& state, const Pa
     refs.transfer_summary->setText(format_transfer_summary(snapshot.transfers));
   }
   if (!snapshot.status.last_send_error.empty()) {
+    if (snapshot.status.last_send_error != state.last_send_error) {
+      log_line("Send failed: " + snapshot.status.last_send_error);
+    }
     state.send_status = "Send failed: " + snapshot.status.last_send_error;
     refresh_send_status(state.send_status, refs);
   } else if (snapshot.status.send_running) {
     state.send_status = "Sending to selected peer";
     refresh_send_status(state.send_status, refs);
   }
+  state.last_send_error = snapshot.status.last_send_error;
 }
 
 std::unique_ptr<AppService> start_service(const HandheldAppConfig& app_config, RuntimeState& state) {

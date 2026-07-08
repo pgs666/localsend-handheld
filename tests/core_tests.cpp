@@ -1002,6 +1002,46 @@ void test_http_server_routes_and_upload() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_send_downgrades_misadvertised_https_target() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-downgrade-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Receiver";
+  self.port = 0;
+  self.protocol = localsend::ProtocolType::Http;
+  self.fingerprint = "receiver-fingerprint";
+
+  localsend::LocalSendServer server(self, dir);
+  require(server.start(0), "server failed to start for HTTP downgrade test");
+
+  const auto source = dir / "downgrade.txt";
+  {
+    std::ofstream out(source, std::ios::binary);
+    out << "plain http target";
+  }
+
+  localsend::Device target;
+  target.ip = "127.0.0.1";
+  target.port = server.port();
+  target.version = localsend::kProtocolVersion;
+  target.https = true;
+  target.fingerprint = "receiver-fingerprint";
+  target.alias = "Receiver";
+
+  localsend::InfoRegisterDto sender;
+  sender.alias = "Sender";
+  sender.port = 12345;
+  sender.protocol = localsend::ProtocolType::Http;
+
+  require(localsend::send_single_file_http(target, source, sender), "misadvertised HTTPS target should fall back to HTTP");
+  require(std::filesystem::exists(dir / "downgrade (1).txt"), "downgraded HTTP upload missing");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
 void test_http_info_and_register_discovery_semantics() {
   const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-register-tests";
   std::filesystem::remove_all(dir);
@@ -1782,6 +1822,7 @@ int main() {
     test_file_browser_listing();
     test_prepare_outbox_creates_sample_file();
     test_http_server_routes_and_upload();
+    test_http_send_downgrades_misadvertised_https_target();
     test_http_info_and_register_discovery_semantics();
     test_https_server_routes_and_upload();
     test_http_send_multiple_files();

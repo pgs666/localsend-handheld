@@ -483,6 +483,45 @@ bool target_uses_v2_api(const Device& target) {
   return true;
 }
 
+bool info_matches_target_identity(const InfoDto& info, const Device& target) {
+  if (!target.fingerprint.empty() && info.fingerprint == target.fingerprint) {
+    return true;
+  }
+  if (!target.alias.empty() && info.alias == target.alias) {
+    return true;
+  }
+  return target.fingerprint.empty() && target.alias.empty();
+}
+
+Device resolve_send_target(Device target) {
+  if (!target.https) {
+    return target;
+  }
+
+  const HttpResult http_info = request_raw(target.ip, target.port, "GET", kRouteInfo, "", "", false, "");
+  if (http_info.status != 200) {
+    return target;
+  }
+
+  try {
+    const InfoDto info = info_from_json(Json::parse(http_info.body));
+    if (!info_matches_target_identity(info, target)) {
+      return target;
+    }
+    target.https = false;
+    target.version = info.version.empty() ? target.version : info.version;
+    target.fingerprint = info.fingerprint;
+    target.alias = info.alias.empty() ? target.alias : info.alias;
+    target.device_model = info.device_model.empty() ? target.device_model : info.device_model;
+    target.device_type = info.device_type;
+    target.download = info.download;
+    debug_send_line("downgraded target transport to http after /info identity match");
+  } catch (const std::exception&) {
+    return target;
+  }
+  return target;
+}
+
 bool parse_response(HttpStream& stream, HttpResult& result) {
   std::string buffer;
   if (!recv_until_headers(stream, buffer)) {
@@ -1222,6 +1261,8 @@ SendFilesResult send_files_http_detailed(const Device& target,
     return result_error("no files selected");
   }
 
+  const Device send_target = resolve_send_target(target);
+
   std::vector<FileDto> files;
   std::vector<std::uint64_t> transfer_ids;
   files.reserve(file_paths.size());
@@ -1241,8 +1282,8 @@ SendFilesResult send_files_http_detailed(const Device& target,
       const std::uint64_t transfer_id = transfers->add(TransferDirection::Send,
                                                        file.file_name,
                                                        file.size,
-                                                       target.alias,
-                                                       target.ip);
+                                                       send_target.alias,
+                                                       send_target.ip);
       transfers->set_status(transfer_id, TransferStatus::Preparing);
       transfer_ids.push_back(transfer_id);
     } else {
@@ -1257,16 +1298,16 @@ SendFilesResult send_files_http_detailed(const Device& target,
     request.files.emplace(file.id, file);
   }
 
-  const bool v2 = target_uses_v2_api(target);
+  const bool v2 = target_uses_v2_api(send_target);
   debug_send_line(std::string("target api=") + (v2 ? "v2" : "v1"));
-  const HttpResult prepared = request_raw(target.ip,
-                                          target.port,
+  const HttpResult prepared = request_raw(send_target.ip,
+                                          send_target.port,
                                           "POST",
                                           v2 ? kRoutePrepareUpload : kRoutePrepareUploadV1,
                                           to_json(request).dump(),
                                           "application/json",
-                                          target.https,
-                                          target.fingerprint);
+                                          send_target.https,
+                                          send_target.fingerprint);
   debug_send_line("prepare status=" + std::to_string(prepared.status) + " body=" + prepared.body);
   if (prepared.status == 204) {
     if (transfers) {
@@ -1338,14 +1379,14 @@ SendFilesResult send_files_http_detailed(const Device& target,
     }
     const std::string path = with_query(v2 ? kRouteUpload : kRouteUploadV1, query);
     debug_send_line("upload path=" + path + " size=" + std::to_string(file.size));
-    const HttpResult uploaded = post_file_raw(target.ip,
-                                              target.port,
+    const HttpResult uploaded = post_file_raw(send_target.ip,
+                                              send_target.port,
                                               path,
                                               in,
                                               file.size,
                                               file.file_type,
-                                              target.https,
-                                              target.fingerprint,
+                                              send_target.https,
+                                              send_target.fingerprint,
                                               [transfers, transfer_id](std::uint64_t bytes) {
                                                 if (transfers && transfer_id != 0) {
                                                   transfers->set_progress(transfer_id, bytes);

@@ -1,5 +1,6 @@
 #include "localsend/constants.hpp"
 #include "localsend/config.hpp"
+#include "localsend/device_store.hpp"
 #include "localsend/discovery.hpp"
 #include "localsend/http.hpp"
 #include "localsend/protocol.hpp"
@@ -165,6 +166,77 @@ void test_transfer_store_cancel_and_strings() {
 
   store.clear();
   require(store.snapshot().empty(), "transfer clear failed");
+}
+
+void test_device_store_upsert_and_sources() {
+  localsend::DeviceStore store;
+
+  localsend::Device switch_device;
+  switch_device.ip = "192.168.1.50";
+  switch_device.port = 53317;
+  switch_device.alias = "Switch";
+  switch_device.https = true;
+  switch_device.fingerprint = "abc123";
+
+  const std::string first_key = store.upsert_discovered(switch_device);
+  require(first_key == "fingerprint:abc123", "device fingerprint key failed");
+  require(store.snapshot().size() == 1, "device store insert failed");
+
+  switch_device.alias = "LocalSend Switch";
+  switch_device.ip = "192.168.1.51";
+  const std::string second_key = store.upsert_discovered(switch_device);
+  require(second_key == first_key, "device fingerprint should keep stable key");
+  require(store.snapshot().size() == 1, "device upsert should not duplicate");
+
+  auto entry = store.get(first_key);
+  require(entry.has_value(), "device get failed");
+  require(entry->device.alias == "LocalSend Switch", "device update alias failed");
+  require(entry->device.ip == "192.168.1.51", "device update ip failed");
+  require(entry->source == localsend::DeviceSource::Discovered, "device source failed");
+  require(entry->online, "updated device should be online");
+
+  localsend::Device manual;
+  manual.ip = "192.168.1.70";
+  manual.port = 53317;
+  manual.alias = "Manual peer";
+  const std::string manual_key = store.upsert_manual(manual);
+  require(manual_key == "endpoint:192.168.1.70:53317", "manual endpoint key failed");
+  require(store.snapshot().size() == 2, "manual device insert failed");
+  require(store.get(manual_key)->source == localsend::DeviceSource::Manual, "manual source failed");
+
+  require(std::string(localsend::to_string(localsend::DeviceSource::Discovered)) == "discovered", "discovered source string failed");
+  require(std::string(localsend::to_string(localsend::DeviceSource::Manual)) == "manual", "manual source string failed");
+}
+
+void test_device_store_offline_remove_and_clear() {
+  localsend::DeviceStore store;
+
+  localsend::Device device;
+  device.ip = "10.0.0.2";
+  device.port = 53317;
+  device.alias = "Desktop";
+  const std::string key = store.upsert_discovered(device);
+
+  require(store.mark_offline(key), "device mark offline failed");
+  auto entry = store.get(key);
+  require(entry.has_value(), "offline device missing");
+  require(!entry->online, "device should be offline");
+
+  require(store.upsert_discovered(device) == key, "device re-upsert key failed");
+  entry = store.get(key);
+  require(entry->online, "device refresh should mark online");
+
+  require(store.mark_stale_offline(std::chrono::seconds(-1)) == 1, "stale device count failed");
+  entry = store.get(key);
+  require(!entry->online, "stale device should be offline");
+
+  require(store.remove(key), "device remove failed");
+  require(!store.get(key).has_value(), "removed device should be missing");
+  require(!store.remove(key), "removing unknown device should fail");
+
+  store.upsert_discovered(device);
+  store.clear();
+  require(store.snapshot().empty(), "device clear failed");
 }
 
 void test_security_fingerprint() {
@@ -939,6 +1011,8 @@ int main() {
     test_multicast_dto();
     test_transfer_store_lifecycle();
     test_transfer_store_cancel_and_strings();
+    test_device_store_upsert_and_sources();
+    test_device_store_offline_remove_and_clear();
     test_security_fingerprint();
     test_tls_identity_persistence();
     test_mbedtls_linked();

@@ -24,6 +24,7 @@ add_subdirectory(third_party/mbedtls EXCLUDE_FROM_ALL)
 
 add_library(localsend_core
   src/core/config.cpp
+  src/core/device_store.cpp
   src/core/discovery.cpp
   src/core/http.cpp
   src/core/json.cpp

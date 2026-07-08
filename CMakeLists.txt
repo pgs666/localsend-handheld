@@ -16,6 +16,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(localsend_core
+  src/core/http.cpp
   src/core/json.cpp
   src/core/protocol.cpp
   src/core/safe_path.cpp
@@ -27,6 +28,8 @@ target_include_directories(localsend_core
 )
 
 target_compile_features(localsend_core PUBLIC cxx_std_17)
+find_package(Threads REQUIRED)
+target_link_libraries(localsend_core PUBLIC Threads::Threads)
 
 if(MSVC)
   target_compile_options(localsend_core PRIVATE /W4)
@@ -58,4 +61,3 @@ if(PLATFORM_DESKTOP)
     add_test(NAME localsend-core-tests COMMAND localsend-core-tests)
   endif()
 endif()
-

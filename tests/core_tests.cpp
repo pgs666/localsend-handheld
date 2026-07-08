@@ -1,4 +1,5 @@
 #include "localsend/constants.hpp"
+#include "localsend/http.hpp"
 #include "localsend/protocol.hpp"
 #include "localsend/safe_path.hpp"
 
@@ -87,6 +88,51 @@ void test_unique_destination() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_server_routes_and_upload() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Receiver";
+  self.port = 0;
+  self.protocol = localsend::ProtocolType::Http;
+
+  localsend::LocalSendServer server(self, dir);
+  require(server.start(0), "server failed to start");
+
+  const auto info = localsend::http_get("127.0.0.1", server.port(), localsend::kRouteInfo);
+  require(info.status == 200, "info route failed");
+  require(localsend::info_from_json(localsend::Json::parse(info.body)).alias == "Receiver", "info body failed");
+
+  const auto source = dir / "source.txt";
+  {
+    std::ofstream out(source, std::ios::binary);
+    out << "hello localsend";
+  }
+
+  localsend::Device target;
+  target.ip = "127.0.0.1";
+  target.port = server.port();
+  target.https = false;
+
+  localsend::InfoRegisterDto sender;
+  sender.alias = "Sender";
+  sender.port = 12345;
+  sender.protocol = localsend::ProtocolType::Http;
+
+  require(localsend::send_single_file_http(target, source, sender), "single file HTTP send failed");
+  const auto received = dir / "source (1).txt";
+  require(std::filesystem::exists(received), "uploaded file missing");
+  std::ifstream in(received, std::ios::binary);
+  std::string content;
+  std::getline(in, content);
+  require(content == "hello localsend", "uploaded file content mismatch");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
 } // namespace
 
 int main() {
@@ -97,6 +143,7 @@ int main() {
     test_prepare_upload_response_dto();
     test_safe_filename();
     test_unique_destination();
+    test_http_server_routes_and_upload();
   } catch (const std::exception& e) {
     std::cerr << "test failed: " << e.what() << '\n';
     return 1;
@@ -105,4 +152,3 @@ int main() {
   std::cout << "core tests passed\n";
   return 0;
 }
-

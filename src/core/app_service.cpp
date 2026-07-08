@@ -46,6 +46,15 @@ AppServiceStatus AppService::status() const {
   return status;
 }
 
+AppSnapshot AppService::snapshot() const {
+  AppSnapshot snapshot;
+  snapshot.status = status();
+  snapshot.self = self_;
+  snapshot.devices = devices_.snapshot();
+  snapshot.transfers = transfers_.snapshot();
+  return snapshot;
+}
+
 bool AppService::start_server() {
   if (server_) {
     return true;

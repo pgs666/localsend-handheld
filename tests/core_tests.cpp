@@ -539,6 +539,12 @@ void test_app_service_status_and_manual_device() {
   require(key == "endpoint:127.0.0.1:53317", "service manual key failed");
   status = service.status();
   require(status.device_count == 1, "service device count failed");
+  const auto snapshot = service.snapshot();
+  require(snapshot.status.device_count == 1, "service snapshot device count failed");
+  require(snapshot.status.transfer_count == 0, "service snapshot transfer count failed");
+  require(snapshot.self.alias == "Service", "service snapshot self alias failed");
+  require(snapshot.devices.size() == 1, "service snapshot devices failed");
+  require(snapshot.transfers.empty(), "service snapshot transfers should be empty");
   const auto entry = service.devices().get(key);
   require(entry.has_value(), "service manual device missing");
   require(entry->source == localsend::DeviceSource::Manual, "service manual source failed");
@@ -611,6 +617,12 @@ void test_app_service_send_to_manual_device() {
     }
   }
   require(completed == 2, "service transfers should complete");
+  const auto snapshot = service.snapshot();
+  require(snapshot.status.server_running, "service snapshot server status failed");
+  require(snapshot.status.device_count == 1, "service snapshot send device count failed");
+  require(snapshot.status.transfer_count == 2, "service snapshot send transfer count failed");
+  require(snapshot.devices.size() == 1, "service snapshot send devices failed");
+  require(snapshot.transfers.size() == 2, "service snapshot send transfers failed");
 
   service.stop_server();
   require(!service.status().server_running, "service should stop server");

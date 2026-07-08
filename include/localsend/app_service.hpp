@@ -36,6 +36,13 @@ struct AppServiceStatus {
   std::size_t transfer_count = 0;
 };
 
+struct AppSnapshot {
+  AppServiceStatus status;
+  InfoRegisterDto self;
+  std::vector<DeviceEntry> devices;
+  std::vector<TransferItem> transfers;
+};
+
 class AppService {
 public:
   explicit AppService(AppConfig config, AppServiceOptions options = {});
@@ -47,6 +54,7 @@ public:
   const AppConfig& config() const { return config_; }
   const InfoRegisterDto& self_info() const { return self_; }
   AppServiceStatus status() const;
+  AppSnapshot snapshot() const;
 
   DeviceStore& devices() { return devices_; }
   const DeviceStore& devices() const { return devices_; }

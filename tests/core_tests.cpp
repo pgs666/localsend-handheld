@@ -857,6 +857,9 @@ void test_file_browser_listing() {
   require(files.size() == 2, "file browser selectable file count failed");
   require(files[0].filename() == "beta.txt", "file browser selectable first failed");
   require(files[1].filename() == "中文.txt", "file browser selectable UTF-8 failed");
+  const auto first = localsend::first_selectable_file(dir);
+  require(first.has_value(), "file browser first selectable missing");
+  require(first->filename() == "beta.txt", "file browser first selectable failed");
 
   std::filesystem::remove_all(dir);
 }
@@ -875,6 +878,9 @@ void test_prepare_outbox_creates_sample_file() {
   const auto files = localsend::selectable_files(listing);
   require(files.size() == 1, "outbox listing selectable count failed");
   require(files[0].filename() == "localsend-handheld-test.txt", "outbox listing sample failed");
+  const auto first = localsend::first_selectable_file(dir);
+  require(first.has_value(), "outbox first selectable missing");
+  require(first->filename() == "localsend-handheld-test.txt", "outbox first selectable failed");
 
   std::filesystem::remove_all(dir);
 }

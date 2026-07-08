@@ -12,7 +12,9 @@
 #include <exception>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace localsend::handheld {
 namespace {
@@ -38,11 +40,13 @@ struct RuntimeState {
   std::string server_status = "Not started";
   std::string discovery_status = "Not started";
   std::string file_browser_status = "Not checked";
+  std::string send_status = "Select a peer, then press X";
 };
 
 struct PanelRefs {
   brls::Label* server_status = nullptr;
   brls::Label* discovery_status = nullptr;
+  brls::Label* send_status = nullptr;
   brls::Label* device_summary = nullptr;
   brls::Label* transfer_summary = nullptr;
 };
@@ -120,6 +124,7 @@ brls::View* make_panel(const HandheldAppConfig& config, const RuntimeState& stat
                              "/api/localsend/v2/info"));
   root->addView(make_row("Discovery", state.discovery_status, &refs.discovery_status));
   root->addView(make_row("File browser", state.file_browser_status));
+  root->addView(make_row("Send action", state.send_status, &refs.send_status));
 
   root->addView(make_section("Peers"));
   root->addView(make_row("Known devices", "No peers yet", &refs.device_summary));
@@ -176,6 +181,12 @@ void refresh_discovery_status(const std::string& text, const PanelRefs& refs) {
   }
 }
 
+void refresh_send_status(const std::string& text, const PanelRefs& refs) {
+  if (refs.send_status) {
+    refs.send_status->setText(text);
+  }
+}
+
 void refresh_service_snapshot(const AppService& service, const PanelRefs& refs) {
   const AppSnapshot snapshot = service.snapshot();
   if (refs.device_summary) {
@@ -191,6 +202,7 @@ std::unique_ptr<AppService> start_service(const HandheldAppConfig& app_config, R
   config.alias = app_config.alias;
   config.port = app_config.port;
   config.inbox_path = app_config.inbox_path;
+  config.outbox_path = app_config.outbox_path;
   config.config_path = app_config.config_path;
   config.discovery_enabled = app_config.enable_discovery;
 
@@ -295,6 +307,42 @@ int run_handheld_app(const HandheldAppConfig& config) {
 
   auto* frame = new brls::AppletFrame(panel);
   frame->setTitle("LocalSend Handheld");
+  frame->registerAction("Send test", brls::BUTTON_X, [&](brls::View*) {
+    if (!service || !state.server_started) {
+      state.send_status = "Receive server not ready";
+      refresh_send_status(state.send_status, refs);
+      log_line("Send action rejected: service not ready");
+      return true;
+    }
+
+    const AppSnapshot snapshot = service->snapshot();
+    if (snapshot.devices.empty()) {
+      state.send_status = "No peer discovered";
+      refresh_send_status(state.send_status, refs);
+      log_line("Send action rejected: no peer");
+      return true;
+    }
+
+    const std::optional<std::filesystem::path> file = first_selectable_file(config.outbox_path);
+    if (!file) {
+      state.send_status = "Outbox empty";
+      refresh_send_status(state.send_status, refs);
+      log_line("Send action rejected: outbox empty");
+      return true;
+    }
+
+    const DeviceEntry& target = snapshot.devices.front();
+    if (service->start_send_to_device(target.key, std::vector<std::filesystem::path>{*file})) {
+      const std::string peer = target.device.alias.empty() ? target.device.ip : target.device.alias;
+      state.send_status = "Sending " + file->filename().string() + " to " + peer;
+      log_line("Send action started file=" + file->string() + " target=" + target.key);
+    } else {
+      state.send_status = service->send_running() ? "Send already running" : "Send start failed";
+      log_line("Send action failed to start");
+    }
+    refresh_send_status(state.send_status, refs);
+    return true;
+  });
   log_line("Using AppletFrame bottom-bar shell");
   log_line("Pushing activity");
   brls::Application::pushActivity(new brls::Activity(frame));

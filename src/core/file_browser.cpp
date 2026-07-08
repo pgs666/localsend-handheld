@@ -82,6 +82,14 @@ std::vector<std::filesystem::path> selectable_files(const DirectoryListing& list
   return files;
 }
 
+std::optional<std::filesystem::path> first_selectable_file(const std::filesystem::path& path) {
+  const auto files = selectable_files(list_directory(path));
+  if (files.empty()) {
+    return std::nullopt;
+  }
+  return files.front();
+}
+
 OutboxStatus prepare_outbox(const std::filesystem::path& path, bool create_sample_file) {
   OutboxStatus status;
   status.path = path;

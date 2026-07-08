@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,7 @@ struct OutboxStatus {
 
 DirectoryListing list_directory(const std::filesystem::path& path);
 std::vector<std::filesystem::path> selectable_files(const DirectoryListing& listing);
+std::optional<std::filesystem::path> first_selectable_file(const std::filesystem::path& path);
 OutboxStatus prepare_outbox(const std::filesystem::path& path, bool create_sample_file = true);
 
 } // namespace localsend

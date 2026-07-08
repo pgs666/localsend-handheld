@@ -78,6 +78,61 @@ std::string sanitize_filename(const std::string& value) {
   return out.empty() ? "localsend-upload.bin" : out;
 }
 
+int hex_value(char c) {
+  if (c >= '0' && c <= '9') {
+    return c - '0';
+  }
+  if (c >= 'a' && c <= 'f') {
+    return c - 'a' + 10;
+  }
+  if (c >= 'A' && c <= 'F') {
+    return c - 'A' + 10;
+  }
+  return -1;
+}
+
+std::string url_decode(const std::string& value) {
+  std::string out;
+  for (size_t i = 0; i < value.size(); ++i) {
+    if (value[i] == '%' && i + 2 < value.size()) {
+      const int hi = hex_value(value[i + 1]);
+      const int lo = hex_value(value[i + 2]);
+      if (hi >= 0 && lo >= 0) {
+        out.push_back(static_cast<char>((hi << 4) | lo));
+        i += 2;
+        continue;
+      }
+    }
+    out.push_back(value[i] == '+' ? ' ' : value[i]);
+  }
+  return out;
+}
+
+bool file_exists(const std::string& path) {
+  struct stat st {};
+  return stat(path.c_str(), &st) == 0;
+}
+
+std::string unique_inbox_path(const std::string& file_name) {
+  const std::string clean = sanitize_filename(file_name);
+  const size_t dot = clean.find_last_of('.');
+  const std::string stem = dot == std::string::npos || dot == 0 ? clean : clean.substr(0, dot);
+  const std::string ext = dot == std::string::npos || dot == 0 ? "" : clean.substr(dot);
+  std::string path = std::string(kInbox) + "/" + clean;
+  if (!file_exists(path)) {
+    return path;
+  }
+
+  for (int i = 1; i < 10000; ++i) {
+    path = std::string(kInbox) + "/" + stem + " (" + std::to_string(i) + ")" + ext;
+    if (!file_exists(path)) {
+      return path;
+    }
+  }
+
+  return std::string(kInbox) + "/" + stem + " (9999)" + ext;
+}
+
 std::string find_json_string(const std::string& body, const std::string& key, const std::string& fallback) {
   const std::string marker = "\"" + key + "\":";
   size_t pos = body.find(marker);
@@ -180,7 +235,7 @@ std::string query_value(const std::string& target, const std::string& key) {
   }
   pos += marker.size();
   const size_t end = target.find('&', pos);
-  return target.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+  return url_decode(target.substr(pos, end == std::string::npos ? std::string::npos : end - pos));
 }
 
 bool send_all(int fd, const char* data, size_t size) {
@@ -340,7 +395,7 @@ void handle_upload(int fd, const std::string& target, const std::string& initial
   }
 
   mkdir(kInbox, 0777);
-  const std::string path = std::string(kInbox) + "/" + selected->file_name;
+  const std::string path = unique_inbox_path(selected->file_name);
   FILE* out = std::fopen(path.c_str(), "wb");
   if (!out) {
     std::snprintf(g_status, sizeof(g_status), "Open failed: errno %d", errno);

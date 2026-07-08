@@ -38,6 +38,7 @@ struct RuntimeState {
   bool discovery_started = false;
   int server_port = 53317;
   std::string ip = "-";
+  std::string alias = "LocalSend Handheld";
   std::string server_status = "Not started";
   std::string discovery_status = "Not started";
   std::string file_browser_status = "Not checked";
@@ -55,6 +56,38 @@ struct PanelRefs {
   brls::Label* device_summary = nullptr;
   brls::Label* transfer_summary = nullptr;
 };
+
+AppConfig platform_default_config(const HandheldAppConfig& app_config) {
+  AppConfig config = default_config(app_config.platform);
+  config.alias = app_config.alias;
+  config.port = app_config.port;
+  config.inbox_path = app_config.inbox_path;
+  config.outbox_path = app_config.outbox_path;
+  config.config_path = app_config.config_path;
+  config.discovery_enabled = app_config.enable_discovery;
+  return config;
+}
+
+AppConfig load_handheld_config(const HandheldAppConfig& app_config) {
+  AppConfig config = platform_default_config(app_config);
+  try {
+    if (std::filesystem::exists(config.config_path)) {
+      config = load_config(app_config.platform, config.config_path);
+      config.config_path = app_config.config_path;
+      log_line("Loaded config: " + config.config_path.string());
+    } else {
+      save_config(config, config.config_path);
+      log_line("Created default config: " + config.config_path.string());
+    }
+  } catch (const std::exception& e) {
+    log_line(std::string("Config load failed; using defaults: ") + e.what());
+  }
+
+  config.inbox_path = app_config.inbox_path;
+  config.outbox_path = app_config.outbox_path;
+  config.config_path = app_config.config_path;
+  return config;
+}
 
 brls::Label* make_label(const std::string& text,
                         float size,
@@ -92,8 +125,11 @@ brls::Label* make_section(const std::string& text) {
   return label;
 }
 
-brls::View* make_panel(const HandheldAppConfig& config, const RuntimeState& state, PanelRefs& refs) {
-  const std::string scheme = config.enable_tls ? "https" : "http";
+brls::View* make_panel(const HandheldAppConfig& app_config,
+                       const AppConfig& service_config,
+                       const RuntimeState& state,
+                       PanelRefs& refs) {
+  const std::string scheme = app_config.enable_tls ? "https" : "http";
 
   auto* root = new brls::Box(brls::Axis::COLUMN);
   root->setGrow(1.0f);
@@ -104,23 +140,24 @@ brls::View* make_panel(const HandheldAppConfig& config, const RuntimeState& stat
   title->setMargins(0, 0, 8, 0);
   root->addView(title);
 
-  auto* subtitle = make_label(config.device_model + " UI base", 22, brls::HorizontalAlign::CENTER, 780);
+  auto* subtitle = make_label(app_config.device_model + " UI base", 22, brls::HorizontalAlign::CENTER, 780);
   subtitle->setMargins(0, 0, 18, 0);
   root->addView(subtitle);
 
   root->addView(make_section("Runtime"));
-  root->addView(make_row("Renderer", config.renderer));
+  root->addView(make_row("Renderer", app_config.renderer));
   root->addView(make_row("UI build", kUiBuild));
+  root->addView(make_row("Alias", state.alias));
   root->addView(make_row("Local IP", state.ip));
   root->addView(make_row("Local port", std::to_string(state.server_port)));
   root->addView(make_row("Protocol", kProtocol));
-  root->addView(make_row("Transport", config.enable_tls ? "HTTPS" : "HTTP; Encryption must be off on peer"));
+  root->addView(make_row("Transport", app_config.enable_tls ? "HTTPS" : "HTTP; Encryption must be off on peer"));
 
   root->addView(make_section("Paths"));
-  root->addView(make_row("Inbox", config.inbox_path));
-  root->addView(make_row("Outbox", config.outbox_path));
-  root->addView(make_row("Config", config.config_path));
-  root->addView(make_row("Log", config.log_path));
+  root->addView(make_row("Inbox", service_config.inbox_path.string()));
+  root->addView(make_row("Outbox", service_config.outbox_path.string()));
+  root->addView(make_row("Config", service_config.config_path.string()));
+  root->addView(make_row("Log", app_config.log_path));
 
   root->addView(make_section("Feature wiring"));
   root->addView(make_row("Receive server", state.server_status, &refs.server_status));
@@ -134,12 +171,13 @@ brls::View* make_panel(const HandheldAppConfig& config, const RuntimeState& stat
   root->addView(make_section("Peers"));
   root->addView(make_row("Selected", state.selected_peer_status, &refs.selected_peer));
   root->addView(make_row("Known devices", "No peers yet", &refs.device_summary));
+  root->addView(make_row("Manual peers", std::to_string(service_config.manual_devices.size())));
 
   root->addView(make_section("Transfers"));
   root->addView(make_row("Recent", "No transfers yet", &refs.transfer_summary));
 
   const std::string hint_text =
-      config.platform == PlatformKind::Switch
+      app_config.platform == PlatformKind::Switch
           ? "Receive server starts automatically"
           : "Receive server starts automatically";
   auto* hint = make_label(hint_text, 20, brls::HorizontalAlign::CENTER, 780);
@@ -221,15 +259,9 @@ void refresh_service_snapshot(AppService& service, RuntimeState& state, const Pa
   state.last_send_error = snapshot.status.last_send_error;
 }
 
-std::unique_ptr<AppService> start_service(const HandheldAppConfig& app_config, RuntimeState& state) {
-  AppConfig config = default_config(app_config.platform);
-  config.alias = app_config.alias;
-  config.port = app_config.port;
-  config.inbox_path = app_config.inbox_path;
-  config.outbox_path = app_config.outbox_path;
-  config.config_path = app_config.config_path;
-  config.discovery_enabled = app_config.enable_discovery;
-
+std::unique_ptr<AppService> start_service(const HandheldAppConfig& app_config,
+                                          const AppConfig& config,
+                                          RuntimeState& state) {
   AppServiceOptions options;
   options.platform = app_config.platform;
   options.enable_tls = app_config.enable_tls;
@@ -243,7 +275,7 @@ std::unique_ptr<AppService> start_service(const HandheldAppConfig& app_config, R
     state.server_port = service->status().port;
     state.server_status = "Started";
     log_line("Receive server started on port " + std::to_string(state.server_port));
-    if (app_config.enable_discovery) {
+    if (config.discovery_enabled) {
       const bool announced = service->announce_once();
       log_line(announced ? "Discovery announcement sent" : "Discovery announcement failed");
       state.discovery_started = service->start_discovery();
@@ -300,11 +332,15 @@ int run_handheld_app(const HandheldAppConfig& config) {
   brls::Application::getPlatform()->setThemeVariant(brls::ThemeVariant::DARK);
   brls::Application::setGlobalQuit(false);
 
+  const AppConfig service_config = load_handheld_config(config);
   RuntimeState state;
-  state.server_port = config.port;
+  state.server_port = service_config.port;
+  state.alias = service_config.alias;
   state.ip = brls::Application::getPlatform()->getIpAddress();
   log_line("Detected IP: " + state.ip);
-  const OutboxStatus outbox_status = prepare_outbox(config.outbox_path, true);
+  log_line("Runtime alias: " + state.alias);
+  log_line("Manual peers configured: " + std::to_string(service_config.manual_devices.size()));
+  const OutboxStatus outbox_status = prepare_outbox(service_config.outbox_path, true);
   state.file_browser_status = format_outbox_status(outbox_status);
   log_line("Outbox status: " + state.file_browser_status);
 
@@ -312,7 +348,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
   const bool start_service_before_ui = config.platform != PlatformKind::Switch;
   if (start_service_before_ui) {
     try {
-      service = start_service(config, state);
+      service = start_service(config, service_config, state);
     } catch (const std::exception& e) {
       state.server_status = std::string("Exception: ") + e.what();
       log_line(state.server_status);
@@ -326,7 +362,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
   }
 
   PanelRefs refs;
-  auto* panel = make_panel(config, state, refs);
+  auto* panel = make_panel(config, service_config, state, refs);
   refresh_panel(state, refs);
 
   auto* frame = new brls::AppletFrame(panel);
@@ -348,7 +384,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
       return true;
     }
 
-    const std::optional<std::filesystem::path> file = first_selectable_file(config.outbox_path);
+    const std::optional<std::filesystem::path> file = first_selectable_file(service_config.outbox_path);
     if (!file) {
       state.send_status = "Outbox empty";
       refresh_send_status(state.send_status, refs);
@@ -406,7 +442,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
         std::chrono::steady_clock::now() >= deferred_start) {
       log_line("Deferred Switch receive server start");
       try {
-        service = start_service(config, state);
+        service = start_service(config, service_config, state);
       } catch (const std::exception& e) {
         state.server_status = std::string("Exception: ") + e.what();
         log_line(state.server_status);
@@ -422,7 +458,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
       service->poll_server_once();
     }
 
-    if (service && state.server_started && config.enable_discovery && !state.discovery_started &&
+    if (service && state.server_started && service_config.discovery_enabled && !state.discovery_started &&
         std::chrono::steady_clock::now() >= next_announce) {
       const bool ok = service->announce_once();
       refresh_discovery_status(ok ? "Periodic announce sent" : "Periodic announce failed", refs);

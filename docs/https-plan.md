@@ -36,5 +36,6 @@ Current handheld status:
 
 - Desktop core supports HTTPS send and receive in tests.
 - Switch console MVP supports HTTPS target probing, HTTPS file send, HTTPS discovery, and same-port HTTP/HTTPS receive.
+- Switch HTTPS receive has been verified on hardware with LocalSend Windows `MatebookEGo` sending `switch-test-5.txt` over TLS.
 - Switch HTTPS receive still uses an embedded development certificate; persistent platform certificate loading is the next cleanup step.
 - PSV remains a packaging smoke target.

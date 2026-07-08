@@ -10,6 +10,7 @@
 #include <cctype>
 #include <functional>
 #include <fstream>
+#include <fcntl.h>
 #include <iostream>
 #include <memory>
 #include <netdb.h>
@@ -765,6 +766,11 @@ bool LocalSendServer::start(int requested_port) {
     return false;
   }
   accept_thread_started_ = true;
+#elif LOCALSEND_PLATFORM_SWITCH
+  const int flags = ::fcntl(listen_fd_, F_GETFL, 0);
+  if (flags >= 0) {
+    ::fcntl(listen_fd_, F_SETFL, flags | O_NONBLOCK);
+  }
 #else
   accept_thread_ = std::thread(&LocalSendServer::accept_loop, this);
 #endif
@@ -785,8 +791,23 @@ void LocalSendServer::stop() {
     accept_thread_started_ = false;
   }
 #else
+#if !LOCALSEND_PLATFORM_SWITCH
   if (accept_thread_.joinable()) {
     accept_thread_.join();
+  }
+#endif
+#endif
+}
+
+void LocalSendServer::poll_once() {
+#if LOCALSEND_PLATFORM_SWITCH
+  if (!running_ || listen_fd_ < 0) {
+    return;
+  }
+
+  const int client = ::accept(listen_fd_, nullptr, nullptr);
+  if (client >= 0) {
+    handle_client(client);
   }
 #endif
 }

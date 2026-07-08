@@ -111,7 +111,7 @@ brls::Box* make_panel(const HandheldAppConfig& config, const RuntimeState& state
 
   const std::string hint_text =
       config.platform == PlatformKind::Switch
-          ? "Receive server starts after the UI is stable"
+          ? "Receive server starts automatically"
           : "Receive server starts automatically";
   auto* hint = make_label(hint_text, 20, brls::HorizontalAlign::CENTER, 780);
   hint->setMargins(24, 0, 0, 0);
@@ -230,8 +230,10 @@ int run_handheld_app(const HandheldAppConfig& config) {
   auto* panel = make_panel(config, state, refs);
   refresh_panel(state, refs);
 
+  auto* frame = new brls::AppletFrame(panel);
+  frame->setTitle("LocalSend Handheld");
   log_line("Pushing activity");
-  brls::Application::pushActivity(new brls::Activity(panel));
+  brls::Application::pushActivity(new brls::Activity(frame));
   log_line("Activity pushed; entering main loop");
 
   auto next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -259,6 +261,10 @@ int run_handheld_app(const HandheldAppConfig& config) {
       refresh_panel(state, refs);
       refresh_discovery_status(state.server_started ? "Waiting for periodic announce" : "Server not started", refs);
       next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    }
+
+    if (service && state.server_started && config.platform == PlatformKind::Switch) {
+      service->poll_server_once();
     }
 
     if (service && state.server_started && config.enable_discovery &&

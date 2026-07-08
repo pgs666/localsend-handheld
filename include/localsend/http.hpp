@@ -75,6 +75,7 @@ public:
 
   bool start(int requested_port);
   void stop();
+  void poll_once();
   int port() const { return port_; }
 
 private:

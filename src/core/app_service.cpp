@@ -137,6 +137,12 @@ void AppService::stop_server() {
   server_.reset();
 }
 
+void AppService::poll_server_once() {
+  if (server_) {
+    server_->poll_once();
+  }
+}
+
 bool AppService::announce_once() const {
   if (!config_.discovery_enabled) {
     return false;

@@ -70,6 +70,7 @@ public:
 
   bool start_server();
   void stop_server();
+  void poll_server_once();
   bool server_running() const { return server_ != nullptr; }
 
   bool announce_once() const;

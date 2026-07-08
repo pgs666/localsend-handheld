@@ -1,0 +1,12 @@
+set(LOCALSEND_CORE_SOURCES
+  ${PROJECT_ROOT}/src/core/app_service.cpp
+  ${PROJECT_ROOT}/src/core/config.cpp
+  ${PROJECT_ROOT}/src/core/device_store.cpp
+  ${PROJECT_ROOT}/src/core/discovery.cpp
+  ${PROJECT_ROOT}/src/core/file_browser.cpp
+  ${PROJECT_ROOT}/src/core/http.cpp
+  ${PROJECT_ROOT}/src/core/json.cpp
+  ${PROJECT_ROOT}/src/core/protocol.cpp
+  ${PROJECT_ROOT}/src/core/safe_path.cpp
+  ${PROJECT_ROOT}/src/core/transfer.cpp
+)

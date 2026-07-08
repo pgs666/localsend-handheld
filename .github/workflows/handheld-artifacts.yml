@@ -29,14 +29,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Configure
+        working-directory: platform/switch
+        run: cmake -S . -B build-ui
       - name: Build .nro
         working-directory: platform/switch
-        run: make -j2
+        run: cmake --build build-ui --parallel 2
       - name: Upload .nro
         uses: actions/upload-artifact@v4
         with:
           name: localsend-handheld-switch-nro
-          path: platform/switch/localsend-handheld.nro
+          path: platform/switch/build-ui/localsend-handheld.nro
 
   psv:
     name: PlayStation Vita VPK

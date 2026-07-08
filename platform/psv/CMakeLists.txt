@@ -13,6 +13,8 @@ project(localsend_handheld_psv C CXX)
 include("${VITASDK}/share/vita.cmake" REQUIRED)
 
 set(PROJECT_ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
+include(${PROJECT_ROOT}/cmake/LocalSendCoreSources.cmake)
+include(${PROJECT_ROOT}/cmake/LocalSendHandheldUi.cmake)
 
 set(VITA_APP_NAME "LocalSend Handheld")
 set(VITA_TITLEID "LSHD00001")
@@ -37,18 +39,7 @@ set(BRLS_RESOURCES_DIR "app0:" CACHE STRING "" FORCE)
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../third_party/borealis/library
   ${CMAKE_CURRENT_BINARY_DIR}/borealis)
 
-add_library(localsend-core-psv STATIC
-  ${PROJECT_ROOT}/src/core/app_service.cpp
-  ${PROJECT_ROOT}/src/core/config.cpp
-  ${PROJECT_ROOT}/src/core/device_store.cpp
-  ${PROJECT_ROOT}/src/core/discovery.cpp
-  ${PROJECT_ROOT}/src/core/file_browser.cpp
-  ${PROJECT_ROOT}/src/core/http.cpp
-  ${PROJECT_ROOT}/src/core/json.cpp
-  ${PROJECT_ROOT}/src/core/protocol.cpp
-  ${PROJECT_ROOT}/src/core/safe_path.cpp
-  ${PROJECT_ROOT}/src/core/transfer.cpp
-)
+add_library(localsend-core-psv STATIC ${LOCALSEND_CORE_SOURCES})
 
 set_target_properties(localsend-core-psv PROPERTIES
   CXX_STANDARD 17
@@ -88,6 +79,7 @@ target_link_libraries(localsend-core-psv-smoke PRIVATE
 )
 
 add_executable(localsend-handheld-psv
+  ${LOCALSEND_HANDHELD_UI_SOURCES}
   src/main.cpp
   src/psv_compat.cpp
 )
@@ -100,6 +92,10 @@ set_target_properties(localsend-handheld-psv PROPERTIES
 target_compile_definitions(localsend-handheld-psv PRIVATE
   __PSV__
   __psp2__
+)
+
+target_include_directories(localsend-handheld-psv PRIVATE
+  ${LOCALSEND_HANDHELD_UI_INCLUDE_DIRS}
 )
 
 target_compile_options(localsend-handheld-psv PRIVATE

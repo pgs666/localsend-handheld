@@ -22,19 +22,13 @@ set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "Do not build shared Mbed TLS libr
 set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "Build static Mbed TLS libraries" FORCE)
 add_subdirectory(third_party/mbedtls EXCLUDE_FROM_ALL)
 
+set(PROJECT_ROOT ${CMAKE_CURRENT_SOURCE_DIR})
+include(${PROJECT_ROOT}/cmake/LocalSendCoreSources.cmake)
+
 add_library(localsend_core
-  src/core/app_service.cpp
-  src/core/config.cpp
-  src/core/device_store.cpp
-  src/core/discovery.cpp
-  src/core/file_browser.cpp
-  src/core/http.cpp
-  src/core/json.cpp
-  src/core/protocol.cpp
-  src/core/safe_path.cpp
-  src/core/security.cpp
-  src/core/tls.cpp
-  src/core/transfer.cpp
+  ${LOCALSEND_CORE_SOURCES}
+  ${PROJECT_ROOT}/src/core/security.cpp
+  ${PROJECT_ROOT}/src/core/tls.cpp
 )
 
 target_include_directories(localsend_core

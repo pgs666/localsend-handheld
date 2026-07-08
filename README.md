@@ -15,7 +15,7 @@ Initial scope:
 ## Layout
 
 - `include/localsend`, `src/core`: protocol DTOs, JSON, UDP discovery, HTTP send/receive.
-- `app`: desktop prototype entry point now; borealis handheld UI later.
+- `app`: desktop prototype entry point and shared borealis handheld UI shell.
 - `platform`: Switch libnx and PSV VitaSDK targets.
 - `third_party`: reserved for pinned vendored dependencies such as Mongoose, yyjson, borealis.
 
@@ -36,7 +36,7 @@ cmake -S . -B build-psv -DPLATFORM_DESKTOP=OFF -DPLATFORM_PSV=ON
 
 The repository CI builds handheld artifacts directly with platform SDK containers:
 
-- Switch: `platform/switch/localsend-handheld.nro` via `devkitpro/devkita64`.
+- Switch: `platform/switch/build-ui/localsend-handheld.nro` via `devkitpro/devkita64`.
 - PSV: `platform/psv/build/localsend-handheld.vpk` via `vitasdk/vitasdk`, including `sce_sys/icon0.png`.
 
 Local platform builds require devkitPro/libnx or VitaSDK installed.
@@ -89,7 +89,7 @@ manual IP probing:
 - HTTP only; official LocalSend peers must turn off Encryption.
 - No PIN, text messages, recursive folders, `/prepare-download`, or `/download`.
 - HTTP upload sends and receives files serially with fixed 64 KiB streaming buffers.
-- Switch currently provides a console HTTP receive MVP with multicast/broadcast discovery announcements and debug logging.
+- Switch now has a shared borealis UI shell build that starts the portable HTTP receive service and discovery announcements. The older console bring-up source is still kept under `platform/switch/src/main.cpp` while the UI path stabilizes.
 - Switch also has a temporary manual send path for protocol testing only: put one file in `sdmc:/switch/localsend/outbox/`, then press `X` in the NRO. If the outbox is empty, the app creates `switch-test.txt` and sends it. It defaults to `192.168.31.150:53317`; create `sdmc:/switch/localsend/target.txt` containing `<ip> <port>` to override it. This path should be removed once the borealis device picker and file browser exist.
-- PSV currently starts a borealis/GXM `.vpk`, exposes HTTP receive routes on `ux0:data/localsend/inbox/`, and periodically announces itself for discovery. The portable send core is compiled for PSV, but the PSV UI still needs a device picker and file browser before user-driven sending is available.
-- borealis handheld UI is still a status screen on PSV; the full device list, transfer list, file picker, and settings pages are pending.
+- PSV uses the same shared borealis UI shell, exposes HTTP receive routes on `ux0:data/localsend/inbox/`, and periodically announces itself for discovery. The portable send core is compiled for PSV, but the PSV UI still needs a device picker and file browser before user-driven sending is available.
+- borealis handheld UI is still a shared status screen; the full device list, transfer list, file picker, and settings pages are pending.

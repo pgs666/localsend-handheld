@@ -6,11 +6,11 @@ tests.
 
 Initial scope:
 
-- LocalSend protocol v2.1-compatible HTTP mode.
+- LocalSend protocol v2.1-compatible HTTP mode, with HTTPS support in desktop core and Switch shared UI builds.
 - Desktop protocol prototype for protocol development and tests.
-- Nintendo Switch `.nro` HTTP receive MVP.
+- Nintendo Switch `.nro` HTTPS receive MVP.
 - PlayStation Vita `.vpk` borealis/GXM receive MVP.
-- Official LocalSend peers must disable Encryption until HTTPS support lands.
+- Official LocalSend peers must disable Encryption for PSV and HTTP-only desktop runs. Switch builds now use HTTPS by default, but still need renewed hardware verification after the shared UI migration.
 
 ## Layout
 
@@ -137,10 +137,9 @@ manual IP probing:
 
 ## Current Limits
 
-- HTTP only; official LocalSend peers must turn off Encryption.
+- Desktop core and Switch shared UI builds support HTTPS with a persistent self-signed certificate. PSV remains HTTP-only until its mbedTLS entropy source is wired and verified.
 - No PIN, text messages, recursive folders, `/prepare-download`, or `/download`.
 - HTTP upload sends and receives files serially with fixed 64 KiB streaming buffers.
-- Switch now has a shared borealis UI shell build that starts the portable HTTP receive service and discovery announcements. The older console bring-up source is still kept under `platform/switch/src/main.cpp` while the UI path stabilizes.
-- Switch also has a temporary manual send path for protocol testing only: put one file in `sdmc:/switch/localsend/outbox/`, then press `X` in the NRO. If the outbox is empty, the app creates `switch-test.txt` and sends it. It defaults to `192.168.31.150:53317`; create `sdmc:/switch/localsend/target.txt` containing `<ip> <port>` to override it. This path should be removed once the borealis device picker and file browser exist.
+- Switch now has a shared borealis UI shell build that starts the portable HTTPS receive service and discovery announcements. The older console bring-up source is still kept under `platform/switch/src/main.cpp` for reference while the UI path stabilizes, but it is not part of the default NRO build.
 - PSV uses the same shared borealis UI shell, exposes HTTP receive routes on `ux0:data/localsend/inbox/`, and periodically announces itself for discovery. The portable send core is compiled for PSV, but the PSV UI still needs a device picker and file browser before user-driven sending is available.
 - borealis handheld UI is still a shared status screen; the full device list, transfer list, file picker, and settings pages are pending.

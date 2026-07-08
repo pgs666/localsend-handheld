@@ -8,6 +8,7 @@
 #include <mbedtls/net_sockets.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/ssl.h>
+#include <mbedtls/version.h>
 #include <mbedtls/x509_crt.h>
 
 #include <cerrno>
@@ -143,13 +144,23 @@ TlsConnection TlsConnection::server(int fd, const TlsCredentials& credentials) {
                              credentials.certificate_pem.size() + 1) != 0) {
     throw std::runtime_error("mbedTLS certificate parse failed");
   }
+  const unsigned char* key_data = reinterpret_cast<const unsigned char*>(credentials.private_key_pem.c_str());
+  const std::size_t key_size = credentials.private_key_pem.size() + 1;
+#if MBEDTLS_VERSION_NUMBER >= 0x03000000
   if (mbedtls_pk_parse_key(&impl->private_key,
-                           reinterpret_cast<const unsigned char*>(credentials.private_key_pem.c_str()),
-                           credentials.private_key_pem.size() + 1,
+                           key_data,
+                           key_size,
                            nullptr,
                            0,
                            mbedtls_ctr_drbg_random,
                            &impl->ctr_drbg) != 0) {
+#else
+  if (mbedtls_pk_parse_key(&impl->private_key,
+                           key_data,
+                           key_size,
+                           nullptr,
+                           0) != 0) {
+#endif
     throw std::runtime_error("mbedTLS private key parse failed");
   }
 

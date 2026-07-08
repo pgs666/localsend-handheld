@@ -55,7 +55,11 @@ target_link_directories(borealis PUBLIC
   ${DEVKITPRO}/portlibs/switch/lib
 )
 
-add_library(localsend-core-switch-ui STATIC ${LOCALSEND_CORE_SOURCES})
+add_library(localsend-core-switch-ui STATIC
+  ${LOCALSEND_CORE_SOURCES}
+  ${PROJECT_ROOT}/src/core/security.cpp
+  ${PROJECT_ROOT}/src/core/tls.cpp
+)
 
 set_target_properties(localsend-core-switch-ui PROPERTIES
   CXX_STANDARD 17
@@ -64,10 +68,11 @@ set_target_properties(localsend-core-switch-ui PROPERTIES
 
 target_include_directories(localsend-core-switch-ui PUBLIC
   ${PROJECT_ROOT}/include
+  ${DEVKITPRO}/portlibs/switch/include
 )
 
 target_compile_definitions(localsend-core-switch-ui PUBLIC
-  LOCALSEND_HAS_MBEDTLS=0
+  LOCALSEND_HAS_MBEDTLS=1
   LOCALSEND_PLATFORM_SWITCH=1
 )
 
@@ -99,6 +104,9 @@ target_compile_options(localsend-handheld-switch-ui PRIVATE
 target_link_libraries(localsend-handheld-switch-ui PRIVATE
   borealis
   localsend-core-switch-ui
+  mbedtls
+  mbedx509
+  mbedcrypto
 )
 
 add_custom_target(localsend-handheld-switch-ui.nro ALL DEPENDS localsend-handheld-switch-ui

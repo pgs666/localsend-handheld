@@ -17,15 +17,15 @@ Implementation sequence:
 
 1. Keep HTTP mode as a debug fallback.
 2. Add dependency-free certificate fingerprint parsing in core. Done.
-3. Vendor mbedTLS at a pinned version and build it for desktop, Switch, and PSV. Done for CI checkout and desktop core linkage.
+3. Vendor mbedTLS at a pinned version and build it for desktop, Switch, and PSV. Done for desktop; Switch UI links devkitPro portlibs mbedTLS 2.28 through the shared core.
 4. Add a reusable TLS stream wrapper around existing TCP sockets. Done for desktop loopback tests.
 5. Generate or load `cert.pem` and `key.pem` per platform. Done in portable core.
 6. Wrap the existing HTTP server/client stream operations with mbedTLS. Done for desktop core.
 7. Advertise `protocol: "https"` and the certificate fingerprint. Done for desktop core.
 8. Verify peer fingerprints when discovery/register/info provided one. Done for desktop core.
-9. Link mbedTLS into Switch and PSV package builds. Done for Switch NRO; PSV still needs protocol integration.
-10. Add UI/config controls to enable HTTPS on handheld targets. Switch currently advertises HTTPS in the console MVP.
-11. Replace the temporary embedded Switch certificate with the portable persistent identity loader.
+9. Link mbedTLS into Switch and PSV package builds. Done for Switch NRO through shared core; PSV still needs a confirmed entropy source before enabling TLS.
+10. Add UI/config controls to enable HTTPS on handheld targets. Switch shared borealis UI now starts the portable HTTPS service by default.
+11. Keep certificate/key loading on the portable persistent identity loader.
 
 Expected platform paths:
 
@@ -35,7 +35,6 @@ Expected platform paths:
 Current handheld status:
 
 - Desktop core supports HTTPS send and receive in tests.
-- Switch console MVP supports HTTPS target probing, HTTPS file send, HTTPS discovery, and same-port HTTP/HTTPS receive.
-- Switch HTTPS receive has been verified on hardware with LocalSend Windows `MatebookEGo` sending `switch-test-5.txt` over TLS.
-- Switch HTTPS receive still uses an embedded development certificate; persistent platform certificate loading is the next cleanup step.
-- PSV remains a packaging smoke target.
+- Switch shared borealis UI builds with the portable HTTPS receive/send core and persistent `cert.pem` / `key.pem` identity paths.
+- Switch HTTPS still needs renewed hardware testing after the shared UI migration.
+- PSV remains an HTTP packaging target until a VitaSDK entropy source is confirmed and wired into mbedTLS.

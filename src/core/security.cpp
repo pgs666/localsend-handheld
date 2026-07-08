@@ -4,7 +4,11 @@
 #include <mbedtls/entropy.h>
 #include <mbedtls/pk.h>
 #include <mbedtls/rsa.h>
+#include <mbedtls/version.h>
 #include <mbedtls/x509_crt.h>
+#if MBEDTLS_VERSION_NUMBER < 0x03000000
+#include <mbedtls/bignum.h>
+#endif
 
 #include <array>
 #include <cctype>
@@ -196,7 +200,17 @@ TlsIdentity generate_tls_identity() {
   mbedtls_x509write_crt_set_subject_key(&certificate, &key);
   mbedtls_x509write_crt_set_issuer_key(&certificate, &key);
 
+#if MBEDTLS_VERSION_NUMBER >= 0x03000000
   result = mbedtls_x509write_crt_set_serial_raw(&certificate, serial, sizeof(serial));
+#else
+  mbedtls_mpi serial_mpi;
+  mbedtls_mpi_init(&serial_mpi);
+  result = mbedtls_mpi_read_binary(&serial_mpi, serial, sizeof(serial));
+  if (result == 0) {
+    result = mbedtls_x509write_crt_set_serial(&certificate, &serial_mpi);
+  }
+  mbedtls_mpi_free(&serial_mpi);
+#endif
   if (result != 0) {
     cleanup();
     throw std::runtime_error(mbedtls_error_text("certificate serial", result));

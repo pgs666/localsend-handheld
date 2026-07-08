@@ -42,6 +42,10 @@ endif()
 add_subdirectory(${BOREALIS_LIBRARY}
   ${CMAKE_CURRENT_BINARY_DIR}/borealis)
 
+target_include_directories(borealis BEFORE PUBLIC
+  ${BOREALIS_LIBRARY}/include/borealis/extern/tinyxml2
+)
+
 target_include_directories(borealis PUBLIC
   ${DEVKITPRO}/portlibs/switch/include
 )

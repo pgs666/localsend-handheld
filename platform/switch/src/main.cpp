@@ -19,6 +19,7 @@ constexpr int kBufferSize = 64 * 1024;
 constexpr int kMaxFiles = 16;
 constexpr const char* kInbox = "sdmc:/switch/localsend/inbox";
 constexpr const char* kMulticastGroup = "224.0.0.167";
+constexpr const char* kBroadcastAddress = "255.255.255.255";
 
 struct PendingFile {
   bool active = false;
@@ -223,6 +224,58 @@ size_t find_json_size_from(const std::string& body, size_t start, size_t fallbac
   return static_cast<size_t>(std::strtoull(body.c_str() + pos, nullptr, 10));
 }
 
+size_t matching_brace(const std::string& body, size_t open_pos) {
+  int depth = 0;
+  bool in_string = false;
+  bool escape = false;
+  for (size_t i = open_pos; i < body.size(); ++i) {
+    const char c = body[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (in_string && c == '\\') {
+      escape = true;
+      continue;
+    }
+    if (c == '"') {
+      in_string = !in_string;
+      continue;
+    }
+    if (in_string) {
+      continue;
+    }
+    if (c == '{') {
+      ++depth;
+    } else if (c == '}') {
+      --depth;
+      if (depth == 0) {
+        return i;
+      }
+    }
+  }
+  return std::string::npos;
+}
+
+std::string previous_object_key(const std::string& body, size_t object_start, const std::string& fallback) {
+  if (object_start == 0) {
+    return fallback;
+  }
+  size_t colon = body.rfind(':', object_start);
+  if (colon == std::string::npos) {
+    return fallback;
+  }
+  size_t end = body.rfind('"', colon);
+  if (end == std::string::npos || end == 0) {
+    return fallback;
+  }
+  size_t begin = body.rfind('"', end - 1);
+  if (begin == std::string::npos || begin >= end) {
+    return fallback;
+  }
+  return body.substr(begin + 1, end - begin - 1);
+}
+
 std::string query_value(const std::string& target, const std::string& key) {
   const size_t q = target.find('?');
   if (q == std::string::npos) {
@@ -346,9 +399,14 @@ void handle_prepare_upload(int fd, const std::string& body) {
     }
 
     const size_t object_start = body.rfind('{', pos);
+    const size_t object_end = object_start == std::string::npos ? std::string::npos : matching_brace(body, object_start);
     PendingFile& file = g_session.files[g_session.file_count];
     file.active = true;
-    file.file_id = find_json_string_from(body, object_start == std::string::npos ? pos : object_start, "id", std::to_string(g_session.file_count));
+    const std::string fallback_id = previous_object_key(body, object_start == std::string::npos ? pos : object_start, std::to_string(g_session.file_count));
+    file.file_id = find_json_string_from(body, object_start == std::string::npos ? pos : object_start, "id", fallback_id);
+    if (object_end != std::string::npos && body.find("\"id\":", object_start) > object_end) {
+      file.file_id = fallback_id;
+    }
     file.token = "switch-token-" + std::to_string(g_session.file_count);
     file.file_name = sanitize_filename(find_json_string_from(body, pos, "fileName", "localsend-upload.bin"));
     file.size = find_json_size_from(body, pos, 0);
@@ -500,31 +558,44 @@ int create_server() {
   return fd;
 }
 
-void send_announcement() {
-  const int fd = socket(AF_INET, SOCK_DGRAM, 0);
-  if (fd < 0) {
-    return;
-  }
-
+bool send_discovery_packet(int fd, const char* address, const std::string& payload) {
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
   addr.sin_port = htons(kPort);
-  if (inet_pton(AF_INET, kMulticastGroup, &addr.sin_addr) != 1) {
-    close(fd);
-    return;
+  if (inet_pton(AF_INET, address, &addr.sin_addr) != 1) {
+    return false;
   }
 
-  const std::string payload =
-      "{\"alias\":\"LocalSend Switch\",\"version\":\"2.1\",\"deviceModel\":\"Nintendo Switch\","
-      "\"deviceType\":\"desktop\",\"fingerprint\":\"\",\"port\":53317,\"protocol\":\"http\","
-      "\"download\":false,\"announce\":true}";
   const ssize_t sent = sendto(fd,
                               payload.data(),
                               payload.size(),
                               0,
                               reinterpret_cast<sockaddr*>(&addr),
                               sizeof(addr));
-  if (sent == static_cast<ssize_t>(payload.size())) {
+  return sent == static_cast<ssize_t>(payload.size());
+}
+
+void send_announcement() {
+  const int fd = socket(AF_INET, SOCK_DGRAM, 0);
+  if (fd < 0) {
+    return;
+  }
+
+  int enabled = 1;
+  setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &enabled, sizeof(enabled));
+
+  unsigned char ttl = 1;
+  unsigned char loop = 1;
+  setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
+  setsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop));
+
+  const std::string payload =
+      "{\"alias\":\"LocalSend Switch\",\"version\":\"2.1\",\"deviceModel\":\"Nintendo Switch\","
+      "\"deviceType\":\"desktop\",\"fingerprint\":\"\",\"port\":53317,\"protocol\":\"http\","
+      "\"download\":false,\"announce\":true,\"announcement\":true}";
+  bool sent_any = send_discovery_packet(fd, kMulticastGroup, payload);
+  sent_any = send_discovery_packet(fd, kBroadcastAddress, payload) || sent_any;
+  if (sent_any) {
     ++g_announcements;
   }
   close(fd);
@@ -535,7 +606,7 @@ void draw_status() {
   std::printf("LocalSend Handheld\n");
   std::printf("Switch HTTP receive MVP\n\n");
   std::printf("Listening: http://<switch-ip>:%d\n", kPort);
-  std::printf("Discovery: %s:%d announcements=%d\n", kMulticastGroup, kPort, g_announcements);
+  std::printf("Discovery: multicast+broadcast announcements=%d\n", g_announcements);
   std::printf("Inbox: %s\n", kInbox);
   std::printf("Encryption must be disabled on peers.\n\n");
   std::printf("Files received: %d\n", g_received_files);

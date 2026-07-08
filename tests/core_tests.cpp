@@ -686,6 +686,62 @@ void test_http_send_multiple_files() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_transfer_store_updates() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-transfer-store-tests";
+  const auto source_dir = dir / "source";
+  const auto inbox_dir = dir / "inbox";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(source_dir);
+  std::filesystem::create_directories(inbox_dir);
+
+  localsend::TransferStore receive_transfers;
+  localsend::TransferStore send_transfers;
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Receiver";
+  self.protocol = localsend::ProtocolType::Http;
+
+  localsend::LocalSendServer server(self, inbox_dir, &receive_transfers);
+  require(server.start(0), "server failed to start for transfer store test");
+
+  const auto source = source_dir / "tracked.txt";
+  {
+    std::ofstream out(source, std::ios::binary);
+    out << "tracked transfer";
+  }
+
+  localsend::Device target;
+  target.ip = "127.0.0.1";
+  target.port = server.port();
+  target.alias = "Receiver";
+  target.https = false;
+
+  localsend::InfoRegisterDto sender;
+  sender.alias = "Sender";
+  sender.port = 12345;
+  sender.protocol = localsend::ProtocolType::Http;
+
+  require(localsend::send_files_http(target, {source}, sender, &send_transfers), "tracked HTTP send failed");
+
+  const auto sent = send_transfers.snapshot();
+  require(sent.size() == 1, "send transfer count failed");
+  require(sent[0].direction == localsend::TransferDirection::Send, "send transfer direction failed");
+  require(sent[0].status == localsend::TransferStatus::Completed, "send transfer should complete");
+  require(sent[0].bytes_transferred == sent[0].size, "send transfer byte count failed");
+  require(sent[0].peer_alias == "Receiver", "send transfer peer alias failed");
+  require(sent[0].peer_ip == "127.0.0.1", "send transfer peer ip failed");
+
+  const auto received = receive_transfers.snapshot();
+  require(received.size() == 1, "receive transfer count failed");
+  require(received[0].direction == localsend::TransferDirection::Receive, "receive transfer direction failed");
+  require(received[0].status == localsend::TransferStatus::Completed, "receive transfer should complete");
+  require(received[0].bytes_transferred == received[0].size, "receive transfer byte count failed");
+  require(received[0].peer_alias == "Sender", "receive transfer peer alias failed");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
 void test_http_v1_legacy_routes() {
   const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-v1-tests";
   std::filesystem::remove_all(dir);
@@ -1025,6 +1081,7 @@ int main() {
     test_http_server_routes_and_upload();
     test_https_server_routes_and_upload();
     test_http_send_multiple_files();
+    test_http_transfer_store_updates();
     test_http_v1_legacy_routes();
     test_http_cancel_rejects_upload();
     test_http_send_to_v1_target();

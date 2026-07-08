@@ -2,6 +2,7 @@
 
 #include "localsend/protocol.hpp"
 #include "localsend/tls.hpp"
+#include "localsend/transfer.hpp"
 
 #include <atomic>
 #include <filesystem>
@@ -60,7 +61,9 @@ HttpResult http_post_chunked(const std::string& host,
 class LocalSendServer {
 public:
   LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox);
+  LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox, TransferStore* transfers);
   LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox, TlsCredentials tls_credentials);
+  LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox, TlsCredentials tls_credentials, TransferStore* transfers);
   ~LocalSendServer();
 
   LocalSendServer(const LocalSendServer&) = delete;
@@ -75,6 +78,7 @@ private:
     FileDto dto;
     std::string token;
     std::filesystem::path destination;
+    std::uint64_t transfer_id = 0;
     bool complete = false;
   };
 
@@ -96,6 +100,7 @@ private:
   InfoRegisterDto self_;
   std::filesystem::path inbox_;
   std::optional<TlsCredentials> tls_credentials_;
+  TransferStore* transfers_ = nullptr;
   int listen_fd_ = -1;
   int port_ = 0;
   std::atomic<bool> running_{false};
@@ -106,5 +111,9 @@ private:
 
 bool send_single_file_http(const Device& target, const std::filesystem::path& file_path, const InfoRegisterDto& self);
 bool send_files_http(const Device& target, const std::vector<std::filesystem::path>& file_paths, const InfoRegisterDto& self);
+bool send_files_http(const Device& target,
+                     const std::vector<std::filesystem::path>& file_paths,
+                     const InfoRegisterDto& self,
+                     TransferStore* transfers);
 
 } // namespace localsend

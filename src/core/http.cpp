@@ -8,6 +8,7 @@
 #include <cerrno>
 #include <cstring>
 #include <cctype>
+#include <functional>
 #include <fstream>
 #include <iostream>
 #include <memory>
@@ -325,7 +326,11 @@ bool fill_stream_buffer(HttpStream& stream, std::string& buffer, std::size_t pos
   return true;
 }
 
-bool read_chunked_body_to_stream(HttpStream& stream, const std::string& initial_body, std::ostream& out, std::size_t& written) {
+bool read_chunked_body_to_stream(HttpStream& stream,
+                                 const std::string& initial_body,
+                                 std::ostream& out,
+                                 std::size_t& written,
+                                 const std::function<void(std::size_t)>& progress = nullptr) {
   std::string buffer = initial_body;
   std::size_t pos = 0;
   written = 0;
@@ -368,6 +373,9 @@ bool read_chunked_body_to_stream(HttpStream& stream, const std::string& initial_
     }
     out.write(buffer.data() + pos, static_cast<std::streamsize>(chunk_size));
     written += chunk_size;
+    if (progress) {
+      progress(written);
+    }
     pos += chunk_size;
     if (pos + 1 >= buffer.size() || buffer[pos] != '\r' || buffer[pos + 1] != '\n') {
       return false;
@@ -544,7 +552,8 @@ HttpResult post_file_raw(const std::string& host,
                          std::uint64_t size,
                          const std::string& content_type,
                          bool use_tls = false,
-                         const std::string& expected_fingerprint = "") {
+                         const std::string& expected_fingerprint = "",
+                         const std::function<void(std::uint64_t)>& progress = nullptr) {
   HttpResult result;
   auto stream = connect_http_stream(host, port, use_tls, expected_fingerprint);
   if (!stream) {
@@ -561,11 +570,16 @@ HttpResult post_file_raw(const std::string& host,
   const std::string headers = request.str();
   bool ok = stream->write_all(headers.data(), headers.size());
   std::vector<char> buffer(kTransferBufferSize);
+  std::uint64_t uploaded = 0;
   while (ok && file) {
     file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
     const std::streamsize got = file.gcount();
     if (got > 0) {
       ok = stream->write_all(buffer.data(), static_cast<std::size_t>(got));
+      uploaded += static_cast<std::uint64_t>(got);
+      if (ok && progress) {
+        progress(uploaded);
+      }
     }
   }
   if (ok) {
@@ -669,8 +683,22 @@ HttpResult http_post_chunked(const std::string& host,
 LocalSendServer::LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox)
     : self_(std::move(self)), inbox_(std::move(inbox)) {}
 
+LocalSendServer::LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox, TransferStore* transfers)
+    : self_(std::move(self)), inbox_(std::move(inbox)), transfers_(transfers) {}
+
 LocalSendServer::LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox, TlsCredentials tls_credentials)
     : self_(std::move(self)), inbox_(std::move(inbox)), tls_credentials_(std::move(tls_credentials)) {
+  self_.protocol = ProtocolType::Https;
+}
+
+LocalSendServer::LocalSendServer(InfoRegisterDto self,
+                                 std::filesystem::path inbox,
+                                 TlsCredentials tls_credentials,
+                                 TransferStore* transfers)
+    : self_(std::move(self)),
+      inbox_(std::move(inbox)),
+      tls_credentials_(std::move(tls_credentials)),
+      transfers_(transfers) {
   self_.protocol = ProtocolType::Https;
 }
 
@@ -827,6 +855,14 @@ HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request, 
     pending.dto = entry.second;
     pending.token = random_hex(12);
     pending.destination = unique_destination_path(inbox_, pending.dto.file_name);
+    if (transfers_) {
+      pending.transfer_id = transfers_->add(TransferDirection::Receive,
+                                            pending.dto.file_name,
+                                            pending.dto.size,
+                                            dto.info.alias,
+                                            "");
+      transfers_->set_status(pending.transfer_id, TransferStatus::Preparing);
+    }
     session.files.emplace(pending.dto.id, pending);
     response.files.emplace(pending.dto.id, pending.token);
   }
@@ -857,6 +893,8 @@ HttpResponse LocalSendServer::handle_upload(HttpStream& stream, const HttpReques
 
   std::filesystem::path destination;
   std::uint64_t expected_size = 0;
+  std::uint64_t transfer_id = 0;
+  std::string session_id;
   {
     std::lock_guard<std::mutex> lock(sessions_mutex_);
     auto session = v2 ? sessions_.find(session_it->second) : sessions_.end();
@@ -878,28 +916,42 @@ HttpResponse LocalSendServer::handle_upload(HttpStream& stream, const HttpReques
     }
     destination = file->second.destination;
     expected_size = file->second.dto.size;
+    transfer_id = file->second.transfer_id;
+    session_id = session->first;
   }
 
   std::ofstream out(destination, std::ios::binary);
   if (!out) {
+    if (transfers_ && transfer_id != 0) {
+      transfers_->fail(transfer_id, "failed to open destination");
+    }
     return text_response(500, "failed to open destination");
   }
 
   auto failed_upload = [&](int status, const std::string& message) {
     out.close();
     std::filesystem::remove(destination);
+    if (transfers_ && transfer_id != 0) {
+      transfers_->fail(transfer_id, message);
+    }
     return text_response(status, message);
   };
 
   std::size_t written = 0;
+  auto update_progress = [&](std::size_t bytes) {
+    if (transfers_ && transfer_id != 0) {
+      transfers_->set_progress(transfer_id, static_cast<std::uint64_t>(bytes));
+    }
+  };
   if (request.chunked) {
-    if (!read_chunked_body_to_stream(stream, initial_body, out, written)) {
+    if (!read_chunked_body_to_stream(stream, initial_body, out, written, update_progress)) {
       return failed_upload(400, "incomplete upload");
     }
   } else {
     if (!initial_body.empty()) {
       out.write(initial_body.data(), static_cast<std::streamsize>(initial_body.size()));
       written += initial_body.size();
+      update_progress(written);
     }
 
     std::vector<char> buffer(kTransferBufferSize);
@@ -912,6 +964,7 @@ HttpResponse LocalSendServer::handle_upload(HttpStream& stream, const HttpReques
       }
       out.write(buffer.data(), static_cast<std::streamsize>(got));
       written += static_cast<std::size_t>(got);
+      update_progress(written);
     }
   }
 
@@ -925,10 +978,13 @@ HttpResponse LocalSendServer::handle_upload(HttpStream& stream, const HttpReques
     return failed_upload(500, "failed to write destination");
   }
   out.close();
+  if (transfers_ && transfer_id != 0) {
+    transfers_->set_status(transfer_id, TransferStatus::Completed);
+  }
 
   {
     std::lock_guard<std::mutex> lock(sessions_mutex_);
-    auto session = sessions_.find(session_it->second);
+    auto session = sessions_.find(session_id);
     if (session != sessions_.end()) {
       auto file = session->second.files.find(file_it->second);
       if (file != session->second.files.end()) {
@@ -952,16 +1008,28 @@ HttpResponse LocalSendServer::handle_cancel(const HttpRequest& request) {
     return text_response(404, "session not found");
   }
   session->second.cancelled = true;
+  if (transfers_) {
+    for (const auto& file : session->second.files) {
+      if (file.second.transfer_id != 0) {
+        transfers_->cancel(file.second.transfer_id);
+      }
+    }
+  }
   return text_response(200, "ok");
 }
 
-bool send_files_http(const Device& target, const std::vector<std::filesystem::path>& file_paths, const InfoRegisterDto& self) {
+bool send_files_http(const Device& target,
+                     const std::vector<std::filesystem::path>& file_paths,
+                     const InfoRegisterDto& self,
+                     TransferStore* transfers) {
   if (file_paths.empty()) {
     return false;
   }
 
   std::vector<FileDto> files;
+  std::vector<std::uint64_t> transfer_ids;
   files.reserve(file_paths.size());
+  transfer_ids.reserve(file_paths.size());
   for (std::size_t i = 0; i < file_paths.size(); ++i) {
     std::ifstream probe(file_paths[i], std::ios::binary);
     if (!probe) {
@@ -973,6 +1041,17 @@ bool send_files_http(const Device& target, const std::vector<std::filesystem::pa
     file.file_name = file_paths[i].filename().string();
     file.size = static_cast<std::uint64_t>(std::filesystem::file_size(file_paths[i]));
     file.file_type = mime_from_filename(file.file_name);
+    if (transfers) {
+      const std::uint64_t transfer_id = transfers->add(TransferDirection::Send,
+                                                       file.file_name,
+                                                       file.size,
+                                                       target.alias,
+                                                       target.ip);
+      transfers->set_status(transfer_id, TransferStatus::Preparing);
+      transfer_ids.push_back(transfer_id);
+    } else {
+      transfer_ids.push_back(0);
+    }
     files.push_back(std::move(file));
   }
 
@@ -992,6 +1071,13 @@ bool send_files_http(const Device& target, const std::vector<std::filesystem::pa
                                           target.https,
                                           target.fingerprint);
   if (prepared.status != 200) {
+    if (transfers) {
+      for (const std::uint64_t transfer_id : transfer_ids) {
+        if (transfer_id != 0) {
+          transfers->fail(transfer_id, "prepare upload failed");
+        }
+      }
+    }
     return false;
   }
 
@@ -1007,20 +1093,34 @@ bool send_files_http(const Device& target, const std::vector<std::filesystem::pa
       }
     }
   } catch (const std::exception&) {
+    if (transfers) {
+      for (const std::uint64_t transfer_id : transfer_ids) {
+        if (transfer_id != 0) {
+          transfers->fail(transfer_id, "invalid prepare upload response");
+        }
+      }
+    }
     return false;
   }
 
   bool all_uploaded = true;
   for (std::size_t i = 0; i < files.size(); ++i) {
     const FileDto& file = files[i];
+    const std::uint64_t transfer_id = transfer_ids[i];
     const auto token = response.files.find(file.id);
     if (token == response.files.end()) {
+      if (transfers && transfer_id != 0) {
+        transfers->fail(transfer_id, "missing upload token");
+      }
       all_uploaded = false;
       continue;
     }
 
     std::ifstream in(file_paths[i], std::ios::binary);
     if (!in) {
+      if (transfers && transfer_id != 0) {
+        transfers->fail(transfer_id, "failed to open source file");
+      }
       return false;
     }
 
@@ -1039,13 +1139,27 @@ bool send_files_http(const Device& target, const std::vector<std::filesystem::pa
                                               file.size,
                                               file.file_type,
                                               target.https,
-                                              target.fingerprint);
+                                              target.fingerprint,
+                                              [transfers, transfer_id](std::uint64_t bytes) {
+                                                if (transfers && transfer_id != 0) {
+                                                  transfers->set_progress(transfer_id, bytes);
+                                                }
+                                              });
     if (uploaded.status != 200) {
+      if (transfers && transfer_id != 0) {
+        transfers->fail(transfer_id, "upload failed");
+      }
       all_uploaded = false;
+    } else if (transfers && transfer_id != 0) {
+      transfers->set_status(transfer_id, TransferStatus::Completed);
     }
   }
 
   return all_uploaded;
+}
+
+bool send_files_http(const Device& target, const std::vector<std::filesystem::path>& file_paths, const InfoRegisterDto& self) {
+  return send_files_http(target, file_paths, self, nullptr);
 }
 
 bool send_single_file_http(const Device& target, const std::filesystem::path& file_path, const InfoRegisterDto& self) {

@@ -18,6 +18,7 @@ struct HttpRequest {
   std::map<std::string, std::string> query;
   std::map<std::string, std::string> headers;
   std::string body;
+  std::size_t content_length = 0;
 };
 
 struct HttpResponse {
@@ -70,7 +71,7 @@ private:
 
   HttpResponse handle_info() const;
   HttpResponse handle_prepare_upload(const HttpRequest& request);
-  HttpResponse handle_upload(const HttpRequest& request);
+  HttpResponse handle_upload(int client_fd, const HttpRequest& request, const std::string& initial_body);
   HttpResponse handle_cancel(const HttpRequest& request);
 
   InfoRegisterDto self_;
@@ -86,4 +87,3 @@ private:
 bool send_single_file_http(const Device& target, const std::filesystem::path& file_path, const InfoRegisterDto& self);
 
 } // namespace localsend
-

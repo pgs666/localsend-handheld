@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <vector>
 
 namespace {
 
@@ -129,9 +130,13 @@ void test_http_server_routes_and_upload() {
   require(localsend::info_from_json(localsend::Json::parse(info.body)).alias == "Receiver", "info body failed");
 
   const auto source = dir / "source.txt";
+  std::vector<char> expected(localsend::kTransferBufferSize + 1234);
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    expected[i] = static_cast<char>(i % 251);
+  }
   {
     std::ofstream out(source, std::ios::binary);
-    out << "hello localsend";
+    out.write(expected.data(), static_cast<std::streamsize>(expected.size()));
   }
 
   localsend::Device target;
@@ -148,9 +153,8 @@ void test_http_server_routes_and_upload() {
   const auto received = dir / "source (1).txt";
   require(std::filesystem::exists(received), "uploaded file missing");
   std::ifstream in(received, std::ios::binary);
-  std::string content;
-  std::getline(in, content);
-  require(content == "hello localsend", "uploaded file content mismatch");
+  std::vector<char> actual((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  require(actual == expected, "uploaded file content mismatch");
 
   server.stop();
   std::filesystem::remove_all(dir);

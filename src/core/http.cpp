@@ -3,6 +3,7 @@
 #include "localsend/constants.hpp"
 #include "localsend/safe_path.hpp"
 
+#include <algorithm>
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstring>
@@ -14,6 +15,7 @@
 #include <sstream>
 #include <sys/socket.h>
 #include <unistd.h>
+#include <vector>
 
 namespace localsend {
 namespace {
@@ -181,7 +183,7 @@ bool read_body(int fd, std::string& buffer, std::size_t header_end, std::size_t 
   return true;
 }
 
-bool parse_request(int fd, HttpRequest& request) {
+bool parse_request_headers(int fd, HttpRequest& request, std::string& initial_body) {
   std::string buffer;
   if (!recv_until_headers(fd, buffer)) {
     return false;
@@ -201,7 +203,28 @@ bool parse_request(int fd, HttpRequest& request) {
     request.query = parse_query(target.substr(query_pos + 1));
   }
 
-  return read_body(fd, buffer, header_end, content_length(request.headers), request.body);
+  request.content_length = content_length(request.headers);
+  initial_body = buffer.substr(header_end);
+  if (initial_body.size() > request.content_length) {
+    initial_body.resize(request.content_length);
+  }
+  return true;
+}
+
+bool read_remaining_body(int fd, const std::string& initial_body, std::size_t length, std::string& body) {
+  body = initial_body;
+  while (body.size() < length) {
+    char chunk[kTransferBufferSize];
+    const ssize_t got = ::recv(fd, chunk, sizeof(chunk), 0);
+    if (got <= 0) {
+      return false;
+    }
+    body.append(chunk, static_cast<std::size_t>(got));
+  }
+  if (body.size() > length) {
+    body.resize(length);
+  }
+  return true;
 }
 
 bool parse_response(int fd, HttpResult& result) {
@@ -271,6 +294,42 @@ HttpResult request_raw(const std::string& host,
 
   const std::string text = request.str();
   if (send_all(fd, text.data(), text.size())) {
+    parse_response(fd, result);
+  }
+  close_fd(fd);
+  return result;
+}
+
+HttpResult post_file_raw(const std::string& host,
+                         int port,
+                         const std::string& path,
+                         std::ifstream& file,
+                         std::uint64_t size,
+                         const std::string& content_type) {
+  HttpResult result;
+  const int fd = connect_tcp(host, port);
+  if (fd < 0) {
+    return result;
+  }
+
+  std::ostringstream request;
+  request << "POST " << path << " HTTP/1.1\r\n"
+          << "Host: " << host << ':' << port << "\r\n"
+          << "Connection: close\r\n"
+          << "Content-Length: " << size << "\r\n"
+          << "Content-Type: " << content_type << "\r\n\r\n";
+
+  const std::string headers = request.str();
+  bool ok = send_all(fd, headers.data(), headers.size());
+  std::vector<char> buffer(kTransferBufferSize);
+  while (ok && file) {
+    file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
+    const std::streamsize got = file.gcount();
+    if (got > 0) {
+      ok = send_all(fd, buffer.data(), static_cast<std::size_t>(got));
+    }
+  }
+  if (ok) {
     parse_response(fd, result);
   }
   close_fd(fd);
@@ -381,7 +440,17 @@ void LocalSendServer::accept_loop() {
 
 void LocalSendServer::handle_client(int client_fd) {
   HttpRequest request;
-  HttpResponse response = parse_request(client_fd, request) ? route(request) : text_response(400, "bad request");
+  std::string initial_body;
+  HttpResponse response;
+  if (!parse_request_headers(client_fd, request, initial_body)) {
+    response = text_response(400, "bad request");
+  } else if (request.method == "POST" && request.path == kRouteUpload) {
+    response = handle_upload(client_fd, request, initial_body);
+  } else if (!read_remaining_body(client_fd, initial_body, request.content_length, request.body)) {
+    response = text_response(400, "bad request body");
+  } else {
+    response = route(request);
+  }
 
   std::ostringstream out;
   out << "HTTP/1.1 " << response.status << ' ' << status_text(response.status) << "\r\n"
@@ -405,7 +474,7 @@ HttpResponse LocalSendServer::route(const HttpRequest& request) {
     return handle_prepare_upload(request);
   }
   if (request.method == "POST" && request.path == kRouteUpload) {
-    return handle_upload(request);
+    return text_response(400, "upload route requires streaming handler");
   }
   if (request.method == "POST" && request.path == kRouteCancel) {
     return handle_cancel(request);
@@ -447,7 +516,7 @@ HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request) 
   return json_response(200, to_json(response));
 }
 
-HttpResponse LocalSendServer::handle_upload(const HttpRequest& request) {
+HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& request, const std::string& initial_body) {
   const auto session_it = request.query.find("sessionId");
   const auto file_it = request.query.find("fileId");
   const auto token_it = request.query.find("token");
@@ -469,17 +538,48 @@ HttpResponse LocalSendServer::handle_upload(const HttpRequest& request) {
     if (file->second.token != token_it->second) {
       return text_response(403, "invalid token");
     }
+    if (request.content_length != file->second.dto.size) {
+      return text_response(400, "file size mismatch");
+    }
     destination = file->second.destination;
-    file->second.complete = true;
   }
 
   std::ofstream out(destination, std::ios::binary);
   if (!out) {
     return text_response(500, "failed to open destination");
   }
-  out.write(request.body.data(), static_cast<std::streamsize>(request.body.size()));
+
+  std::size_t written = 0;
+  if (!initial_body.empty()) {
+    out.write(initial_body.data(), static_cast<std::streamsize>(initial_body.size()));
+    written += initial_body.size();
+  }
+
+  std::vector<char> buffer(kTransferBufferSize);
+  while (written < request.content_length) {
+    const std::size_t remaining = request.content_length - written;
+    const std::size_t chunk_size = std::min(buffer.size(), remaining);
+    const ssize_t got = ::recv(client_fd, buffer.data(), chunk_size, 0);
+    if (got <= 0) {
+      return text_response(400, "incomplete upload");
+    }
+    out.write(buffer.data(), static_cast<std::streamsize>(got));
+    written += static_cast<std::size_t>(got);
+  }
+
   if (!out) {
     return text_response(500, "failed to write destination");
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    auto session = sessions_.find(session_it->second);
+    if (session != sessions_.end()) {
+      auto file = session->second.files.find(file_it->second);
+      if (file != session->second.files.end()) {
+        file->second.complete = true;
+      }
+    }
   }
 
   return text_response(200, "ok");
@@ -538,17 +638,13 @@ bool send_single_file_http(const Device& target, const std::filesystem::path& fi
     return false;
   }
 
-  std::ostringstream body;
-  body << in.rdbuf();
-
   const std::string path = with_query(kRouteUpload, {
       {"sessionId", response.session_id},
       {"fileId", file.id},
       {"token", token->second},
   });
-  const HttpResult uploaded = http_post(target.ip, target.port, path, body.str(), file.file_type);
+  const HttpResult uploaded = post_file_raw(target.ip, target.port, path, in, size, file.file_type);
   return uploaded.status == 200;
 }
 
 } // namespace localsend
-

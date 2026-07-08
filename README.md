@@ -74,6 +74,5 @@ The prototype implements the v2 routes required for the HTTP MVP:
 
 - HTTP only; official LocalSend peers must turn off Encryption.
 - No PIN, text messages, recursive folders, `/prepare-download`, or `/download`.
-- Desktop HTTP upload buffers the body in memory; handheld transfer code will use
-  fixed 64 KiB streaming buffers.
+- HTTP upload sends and receives file bodies with fixed 64 KiB streaming buffers.
 - Switch/PSV UI and package generation are not implemented yet.

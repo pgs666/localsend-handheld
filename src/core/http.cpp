@@ -10,6 +10,7 @@
 #include <cctype>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <random>
@@ -20,15 +21,78 @@
 #include <vector>
 
 namespace localsend {
+
+class HttpStream {
+public:
+  virtual ~HttpStream() = default;
+  virtual int read(char* data, std::size_t size) = 0;
+  virtual bool write_all(const char* data, std::size_t size) = 0;
+  virtual void close_notify() {}
+};
+
 namespace {
 
 constexpr int kClientSocketTimeoutSeconds = 120;
 
-void close_fd(int fd) {
+int socket_send_flags() {
+#ifdef MSG_NOSIGNAL
+  return MSG_NOSIGNAL;
+#else
+  return 0;
+#endif
+}
+
+void close_fd(int& fd) {
   if (fd >= 0) {
     ::close(fd);
+    fd = -1;
   }
 }
+
+class TcpStream final : public HttpStream {
+public:
+  explicit TcpStream(int fd) : fd_(fd) {}
+  ~TcpStream() override { close_fd(fd_); }
+
+  int read(char* data, std::size_t size) override {
+    return static_cast<int>(::recv(fd_, data, size, 0));
+  }
+
+  bool write_all(const char* data, std::size_t size) override {
+    while (size > 0) {
+      const ssize_t sent = ::send(fd_, data, size, socket_send_flags());
+      if (sent <= 0) {
+        return false;
+      }
+      data += sent;
+      size -= static_cast<std::size_t>(sent);
+    }
+    return true;
+  }
+
+private:
+  int fd_ = -1;
+};
+
+class TlsStream final : public HttpStream {
+public:
+  explicit TlsStream(TlsConnection connection) : connection_(std::move(connection)) {}
+
+  int read(char* data, std::size_t size) override {
+    return connection_.read(reinterpret_cast<std::uint8_t*>(data), size);
+  }
+
+  bool write_all(const char* data, std::size_t size) override {
+    return connection_.write_all(reinterpret_cast<const std::uint8_t*>(data), size);
+  }
+
+  void close_notify() override {
+    connection_.close_notify();
+  }
+
+private:
+  TlsConnection connection_;
+};
 
 void set_socket_timeouts(int fd) {
   timeval timeout{};
@@ -120,22 +184,10 @@ std::string with_query(const std::string& path, const std::map<std::string, std:
   return out;
 }
 
-bool send_all(int fd, const char* data, std::size_t size) {
-  while (size > 0) {
-    const ssize_t sent = ::send(fd, data, size, 0);
-    if (sent <= 0) {
-      return false;
-    }
-    data += sent;
-    size -= static_cast<std::size_t>(sent);
-  }
-  return true;
-}
-
-bool recv_until_headers(int fd, std::string& buffer) {
+bool recv_until_headers(HttpStream& stream, std::string& buffer) {
   char chunk[4096];
   while (buffer.find("\r\n\r\n") == std::string::npos) {
-    const ssize_t got = ::recv(fd, chunk, sizeof(chunk), 0);
+    const int got = stream.read(chunk, sizeof(chunk));
     if (got <= 0) {
       return false;
     }
@@ -200,11 +252,11 @@ bool route_is(const HttpRequest& request, const char* path) {
   return request.path == path;
 }
 
-bool read_body(int fd, std::string& buffer, std::size_t header_end, std::size_t length, std::string& body) {
+bool read_body(HttpStream& stream, std::string& buffer, std::size_t header_end, std::size_t length, std::string& body) {
   body = buffer.substr(header_end);
   while (body.size() < length) {
     char chunk[8192];
-    const ssize_t got = ::recv(fd, chunk, sizeof(chunk), 0);
+    const int got = stream.read(chunk, sizeof(chunk));
     if (got <= 0) {
       return false;
     }
@@ -216,19 +268,19 @@ bool read_body(int fd, std::string& buffer, std::size_t header_end, std::size_t 
   return true;
 }
 
-bool parse_request_headers(int fd, HttpRequest& request, std::string& initial_body) {
+bool parse_request_headers(HttpStream& stream, HttpRequest& request, std::string& initial_body) {
   std::string buffer;
-  if (!recv_until_headers(fd, buffer)) {
+  if (!recv_until_headers(stream, buffer)) {
     return false;
   }
   const std::size_t header_end = buffer.find("\r\n\r\n") + 4;
-  std::istringstream stream(buffer.substr(0, header_end));
+  std::istringstream header_stream(buffer.substr(0, header_end));
   std::string target;
   std::string version;
-  stream >> request.method >> target >> version;
+  header_stream >> request.method >> target >> version;
   std::string discard;
-  std::getline(stream, discard);
-  request.headers = parse_headers(stream);
+  std::getline(header_stream, discard);
+  request.headers = parse_headers(header_stream);
 
   const std::size_t query_pos = target.find('?');
   request.path = query_pos == std::string::npos ? target : target.substr(0, query_pos);
@@ -245,11 +297,11 @@ bool parse_request_headers(int fd, HttpRequest& request, std::string& initial_bo
   return true;
 }
 
-bool read_remaining_body(int fd, const std::string& initial_body, std::size_t length, std::string& body) {
+bool read_remaining_body(HttpStream& stream, const std::string& initial_body, std::size_t length, std::string& body) {
   body = initial_body;
   while (body.size() < length) {
     char chunk[kTransferBufferSize];
-    const ssize_t got = ::recv(fd, chunk, sizeof(chunk), 0);
+    const int got = stream.read(chunk, sizeof(chunk));
     if (got <= 0) {
       return false;
     }
@@ -261,10 +313,10 @@ bool read_remaining_body(int fd, const std::string& initial_body, std::size_t le
   return true;
 }
 
-bool fill_stream_buffer(int fd, std::string& buffer, std::size_t pos, std::size_t need) {
+bool fill_stream_buffer(HttpStream& stream, std::string& buffer, std::size_t pos, std::size_t need) {
   char chunk[8192];
   while (buffer.size() - pos < need) {
-    const ssize_t got = ::recv(fd, chunk, sizeof(chunk), 0);
+    const int got = stream.read(chunk, sizeof(chunk));
     if (got <= 0) {
       return false;
     }
@@ -273,7 +325,7 @@ bool fill_stream_buffer(int fd, std::string& buffer, std::size_t pos, std::size_
   return true;
 }
 
-bool read_chunked_body_to_stream(int fd, const std::string& initial_body, std::ostream& out, std::size_t& written) {
+bool read_chunked_body_to_stream(HttpStream& stream, const std::string& initial_body, std::ostream& out, std::size_t& written) {
   std::string buffer = initial_body;
   std::size_t pos = 0;
   written = 0;
@@ -281,7 +333,7 @@ bool read_chunked_body_to_stream(int fd, const std::string& initial_body, std::o
   while (true) {
     std::size_t line_end = buffer.find("\r\n", pos);
     while (line_end == std::string::npos) {
-      if (!fill_stream_buffer(fd, buffer, pos, buffer.size() - pos + 1)) {
+      if (!fill_stream_buffer(stream, buffer, pos, buffer.size() - pos + 1)) {
         return false;
       }
       line_end = buffer.find("\r\n", pos);
@@ -299,7 +351,7 @@ bool read_chunked_body_to_stream(int fd, const std::string& initial_body, std::o
       while (true) {
         line_end = buffer.find("\r\n", pos);
         while (line_end == std::string::npos) {
-          if (!fill_stream_buffer(fd, buffer, pos, buffer.size() - pos + 1)) {
+          if (!fill_stream_buffer(stream, buffer, pos, buffer.size() - pos + 1)) {
             return false;
           }
           line_end = buffer.find("\r\n", pos);
@@ -311,7 +363,7 @@ bool read_chunked_body_to_stream(int fd, const std::string& initial_body, std::o
       }
     }
 
-    if (!fill_stream_buffer(fd, buffer, pos, chunk_size + 2)) {
+    if (!fill_stream_buffer(stream, buffer, pos, chunk_size + 2)) {
       return false;
     }
     out.write(buffer.data() + pos, static_cast<std::streamsize>(chunk_size));
@@ -329,10 +381,10 @@ bool read_chunked_body_to_stream(int fd, const std::string& initial_body, std::o
   }
 }
 
-bool read_chunked_body_to_string(int fd, const std::string& initial_body, std::string& body) {
+bool read_chunked_body_to_string(HttpStream& stream, const std::string& initial_body, std::string& body) {
   std::ostringstream out;
   std::size_t written = 0;
-  if (!read_chunked_body_to_stream(fd, initial_body, out, written)) {
+  if (!read_chunked_body_to_stream(stream, initial_body, out, written)) {
     return false;
   }
   body = out.str();
@@ -347,6 +399,15 @@ bool response_version_is_legacy_v1(const std::string& body) {
   }
 }
 
+HttpResult request_raw(const std::string& host,
+                       int port,
+                       const std::string& method,
+                       const std::string& path,
+                       const std::string& body,
+                       const std::string& content_type,
+                       bool use_tls = false,
+                       const std::string& expected_fingerprint = "");
+
 bool target_uses_v2_api(const Device& target) {
   if (target.version == "1.0") {
     return false;
@@ -355,12 +416,12 @@ bool target_uses_v2_api(const Device& target) {
     return true;
   }
 
-  const HttpResult v2_info = http_get(target.ip, target.port, kRouteInfo);
+  const HttpResult v2_info = request_raw(target.ip, target.port, "GET", kRouteInfo, "", "", target.https, target.fingerprint);
   if (v2_info.status == 200) {
     return !response_version_is_legacy_v1(v2_info.body);
   }
 
-  const HttpResult v1_info = http_get(target.ip, target.port, kRouteInfoV1);
+  const HttpResult v1_info = request_raw(target.ip, target.port, "GET", kRouteInfoV1, "", "", target.https, target.fingerprint);
   if (v1_info.status == 200) {
     return !response_version_is_legacy_v1(v1_info.body);
   }
@@ -368,22 +429,22 @@ bool target_uses_v2_api(const Device& target) {
   return true;
 }
 
-bool parse_response(int fd, HttpResult& result) {
+bool parse_response(HttpStream& stream, HttpResult& result) {
   std::string buffer;
-  if (!recv_until_headers(fd, buffer)) {
+  if (!recv_until_headers(stream, buffer)) {
     return false;
   }
   const std::size_t header_end = buffer.find("\r\n\r\n") + 4;
-  std::istringstream stream(buffer.substr(0, header_end));
+  std::istringstream header_stream(buffer.substr(0, header_end));
   std::string version;
-  stream >> version >> result.status;
+  header_stream >> version >> result.status;
   std::string discard;
-  std::getline(stream, discard);
-  const auto headers = parse_headers(stream);
+  std::getline(header_stream, discard);
+  const auto headers = parse_headers(header_stream);
   if (transfer_encoding_chunked(headers)) {
-    return read_chunked_body_to_string(fd, buffer.substr(header_end), result.body);
+    return read_chunked_body_to_string(stream, buffer.substr(header_end), result.body);
   }
-  return read_body(fd, buffer, header_end, content_length(headers), result.body);
+  return read_body(stream, buffer, header_end, content_length(headers), result.body);
 }
 
 int connect_tcp(const std::string& host, int port) {
@@ -417,15 +478,44 @@ int connect_tcp(const std::string& host, int port) {
   return fd;
 }
 
+std::unique_ptr<HttpStream> connect_http_stream(const std::string& host, int port, bool use_tls, const std::string& expected_fingerprint) {
+  int fd = connect_tcp(host, port);
+  if (fd < 0) {
+    return nullptr;
+  }
+  if (!use_tls) {
+    return std::make_unique<TcpStream>(fd);
+  }
+
+  try {
+    auto tls = TlsConnection::client(fd);
+    if (!tls.handshake()) {
+      close_fd(fd);
+      return nullptr;
+    }
+    const std::string actual_fingerprint = tls.peer_fingerprint();
+    if (!expected_fingerprint.empty() && actual_fingerprint != expected_fingerprint) {
+      tls.close_notify();
+      return nullptr;
+    }
+    return std::make_unique<TlsStream>(std::move(tls));
+  } catch (const std::exception&) {
+    close_fd(fd);
+    return nullptr;
+  }
+}
+
 HttpResult request_raw(const std::string& host,
                        int port,
                        const std::string& method,
                        const std::string& path,
                        const std::string& body,
-                       const std::string& content_type) {
+                       const std::string& content_type,
+                       bool use_tls,
+                       const std::string& expected_fingerprint) {
   HttpResult result;
-  const int fd = connect_tcp(host, port);
-  if (fd < 0) {
+  auto stream = connect_http_stream(host, port, use_tls, expected_fingerprint);
+  if (!stream) {
     return result;
   }
 
@@ -440,10 +530,10 @@ HttpResult request_raw(const std::string& host,
   request << "\r\n" << body;
 
   const std::string text = request.str();
-  if (send_all(fd, text.data(), text.size())) {
-    parse_response(fd, result);
+  if (stream->write_all(text.data(), text.size())) {
+    parse_response(*stream, result);
   }
-  close_fd(fd);
+  stream->close_notify();
   return result;
 }
 
@@ -452,10 +542,12 @@ HttpResult post_file_raw(const std::string& host,
                          const std::string& path,
                          std::ifstream& file,
                          std::uint64_t size,
-                         const std::string& content_type) {
+                         const std::string& content_type,
+                         bool use_tls = false,
+                         const std::string& expected_fingerprint = "") {
   HttpResult result;
-  const int fd = connect_tcp(host, port);
-  if (fd < 0) {
+  auto stream = connect_http_stream(host, port, use_tls, expected_fingerprint);
+  if (!stream) {
     return result;
   }
 
@@ -467,19 +559,19 @@ HttpResult post_file_raw(const std::string& host,
           << "Content-Type: " << content_type << "\r\n\r\n";
 
   const std::string headers = request.str();
-  bool ok = send_all(fd, headers.data(), headers.size());
+  bool ok = stream->write_all(headers.data(), headers.size());
   std::vector<char> buffer(kTransferBufferSize);
   while (ok && file) {
     file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
     const std::streamsize got = file.gcount();
     if (got > 0) {
-      ok = send_all(fd, buffer.data(), static_cast<std::size_t>(got));
+      ok = stream->write_all(buffer.data(), static_cast<std::size_t>(got));
     }
   }
   if (ok) {
-    parse_response(fd, result);
+    parse_response(*stream, result);
   }
-  close_fd(fd);
+  stream->close_notify();
   return result;
 }
 
@@ -487,10 +579,12 @@ HttpResult post_chunked_raw(const std::string& host,
                             int port,
                             const std::string& path,
                             const std::vector<std::string>& chunks,
-                            const std::string& content_type) {
+                            const std::string& content_type,
+                            bool use_tls = false,
+                            const std::string& expected_fingerprint = "") {
   HttpResult result;
-  const int fd = connect_tcp(host, port);
-  if (fd < 0) {
+  auto stream = connect_http_stream(host, port, use_tls, expected_fingerprint);
+  if (!stream) {
     return result;
   }
 
@@ -502,7 +596,7 @@ HttpResult post_chunked_raw(const std::string& host,
           << "Content-Type: " << content_type << "\r\n\r\n";
 
   const std::string headers = request.str();
-  bool ok = send_all(fd, headers.data(), headers.size());
+  bool ok = stream->write_all(headers.data(), headers.size());
   for (const auto& chunk : chunks) {
     if (!ok) {
       break;
@@ -510,15 +604,15 @@ HttpResult post_chunked_raw(const std::string& host,
     std::ostringstream prefix;
     prefix << std::hex << chunk.size() << "\r\n";
     const std::string header = prefix.str();
-    ok = send_all(fd, header.data(), header.size()) &&
-         send_all(fd, chunk.data(), chunk.size()) &&
-         send_all(fd, "\r\n", 2);
+    ok = stream->write_all(header.data(), header.size()) &&
+         stream->write_all(chunk.data(), chunk.size()) &&
+         stream->write_all("\r\n", 2);
   }
-  ok = ok && send_all(fd, "0\r\n\r\n", 5);
+  ok = ok && stream->write_all("0\r\n\r\n", 5);
   if (ok) {
-    parse_response(fd, result);
+    parse_response(*stream, result);
   }
-  close_fd(fd);
+  stream->close_notify();
   return result;
 }
 
@@ -543,12 +637,25 @@ HttpResult http_get(const std::string& host, int port, const std::string& path) 
   return request_raw(host, port, "GET", path, "", "");
 }
 
+HttpResult https_get(const std::string& host, int port, const std::string& path, const std::string& expected_fingerprint) {
+  return request_raw(host, port, "GET", path, "", "", true, expected_fingerprint);
+}
+
 HttpResult http_post(const std::string& host,
                      int port,
                      const std::string& path,
                      const std::string& body,
                      const std::string& content_type) {
   return request_raw(host, port, "POST", path, body, content_type);
+}
+
+HttpResult https_post(const std::string& host,
+                      int port,
+                      const std::string& path,
+                      const std::string& body,
+                      const std::string& content_type,
+                      const std::string& expected_fingerprint) {
+  return request_raw(host, port, "POST", path, body, content_type, true, expected_fingerprint);
 }
 
 HttpResult http_post_chunked(const std::string& host,
@@ -561,6 +668,11 @@ HttpResult http_post_chunked(const std::string& host,
 
 LocalSendServer::LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox)
     : self_(std::move(self)), inbox_(std::move(inbox)) {}
+
+LocalSendServer::LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox, TlsCredentials tls_credentials)
+    : self_(std::move(self)), inbox_(std::move(inbox)), tls_credentials_(std::move(tls_credentials)) {
+  self_.protocol = ProtocolType::Https;
+}
 
 LocalSendServer::~LocalSendServer() {
   stop();
@@ -633,14 +745,31 @@ void LocalSendServer::accept_loop() {
 }
 
 void LocalSendServer::handle_client(int client_fd) {
+  std::unique_ptr<HttpStream> stream;
+  if (tls_credentials_) {
+    try {
+      auto tls = TlsConnection::server(client_fd, *tls_credentials_);
+      if (!tls.handshake()) {
+        close_fd(client_fd);
+        return;
+      }
+      stream = std::make_unique<TlsStream>(std::move(tls));
+    } catch (const std::exception&) {
+      close_fd(client_fd);
+      return;
+    }
+  } else {
+    stream = std::make_unique<TcpStream>(client_fd);
+  }
+
   HttpRequest request;
   std::string initial_body;
   HttpResponse response;
-  if (!parse_request_headers(client_fd, request, initial_body)) {
+  if (!parse_request_headers(*stream, request, initial_body)) {
     response = text_response(400, "bad request");
   } else if (request.method == "POST" && (route_is(request, kRouteUpload) || route_is(request, kRouteUploadV1))) {
-    response = handle_upload(client_fd, request, initial_body, route_is(request, kRouteUpload));
-  } else if (!read_remaining_body(client_fd, initial_body, request.content_length, request.body)) {
+    response = handle_upload(*stream, request, initial_body, route_is(request, kRouteUpload));
+  } else if (!read_remaining_body(*stream, initial_body, request.content_length, request.body)) {
     response = text_response(400, "bad request body");
   } else {
     response = route(request);
@@ -653,8 +782,8 @@ void LocalSendServer::handle_client(int client_fd) {
       << "Connection: close\r\n\r\n"
       << response.body;
   const std::string text = out.str();
-  send_all(client_fd, text.data(), text.size());
-  close_fd(client_fd);
+  stream->write_all(text.data(), text.size());
+  stream->close_notify();
 }
 
 HttpResponse LocalSendServer::route(const HttpRequest& request) {
@@ -677,7 +806,7 @@ HttpResponse LocalSendServer::route(const HttpRequest& request) {
 }
 
 HttpResponse LocalSendServer::handle_info() const {
-  return json_response(200, to_json(static_cast<const InfoDto&>(self_)));
+  return json_response(200, to_json(self_));
 }
 
 HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request, bool v2) {
@@ -718,7 +847,7 @@ HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request, 
   return json_response(200, files);
 }
 
-HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& request, const std::string& initial_body, bool v2) {
+HttpResponse LocalSendServer::handle_upload(HttpStream& stream, const HttpRequest& request, const std::string& initial_body, bool v2) {
   const auto session_it = request.query.find("sessionId");
   const auto file_it = request.query.find("fileId");
   const auto token_it = request.query.find("token");
@@ -764,7 +893,7 @@ HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& re
 
   std::size_t written = 0;
   if (request.chunked) {
-    if (!read_chunked_body_to_stream(client_fd, initial_body, out, written)) {
+    if (!read_chunked_body_to_stream(stream, initial_body, out, written)) {
       return failed_upload(400, "incomplete upload");
     }
   } else {
@@ -777,7 +906,7 @@ HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& re
     while (written < request.content_length) {
       const std::size_t remaining = request.content_length - written;
       const std::size_t chunk_size = std::min(buffer.size(), remaining);
-      const ssize_t got = ::recv(client_fd, buffer.data(), chunk_size, 0);
+      const int got = stream.read(buffer.data(), chunk_size);
       if (got <= 0) {
         return failed_upload(400, "incomplete upload");
       }
@@ -827,9 +956,6 @@ HttpResponse LocalSendServer::handle_cancel(const HttpRequest& request) {
 }
 
 bool send_files_http(const Device& target, const std::vector<std::filesystem::path>& file_paths, const InfoRegisterDto& self) {
-  if (target.https) {
-    return false;
-  }
   if (file_paths.empty()) {
     return false;
   }
@@ -857,7 +983,14 @@ bool send_files_http(const Device& target, const std::vector<std::filesystem::pa
   }
 
   const bool v2 = target_uses_v2_api(target);
-  const HttpResult prepared = http_post(target.ip, target.port, v2 ? kRoutePrepareUpload : kRoutePrepareUploadV1, to_json(request).dump());
+  const HttpResult prepared = request_raw(target.ip,
+                                          target.port,
+                                          "POST",
+                                          v2 ? kRoutePrepareUpload : kRoutePrepareUploadV1,
+                                          to_json(request).dump(),
+                                          "application/json",
+                                          target.https,
+                                          target.fingerprint);
   if (prepared.status != 200) {
     return false;
   }
@@ -899,7 +1032,14 @@ bool send_files_http(const Device& target, const std::vector<std::filesystem::pa
       query.emplace("sessionId", response.session_id);
     }
     const std::string path = with_query(v2 ? kRouteUpload : kRouteUploadV1, query);
-    const HttpResult uploaded = post_file_raw(target.ip, target.port, path, in, file.size, file.file_type);
+    const HttpResult uploaded = post_file_raw(target.ip,
+                                              target.port,
+                                              path,
+                                              in,
+                                              file.size,
+                                              file.file_type,
+                                              target.https,
+                                              target.fingerprint);
     if (uploaded.status != 200) {
       all_uploaded = false;
     }

@@ -22,7 +22,11 @@ namespace {
 
 int tls_send(void* ctx, const unsigned char* buffer, std::size_t size) {
   const int fd = *static_cast<int*>(ctx);
+#ifdef MSG_NOSIGNAL
+  const ssize_t sent = ::send(fd, buffer, size, MSG_NOSIGNAL);
+#else
   const ssize_t sent = ::send(fd, buffer, size, 0);
+#endif
   if (sent < 0) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
       return MBEDTLS_ERR_SSL_WANT_WRITE;

@@ -1,17 +1,21 @@
 #pragma once
 
 #include "localsend/protocol.hpp"
+#include "localsend/tls.hpp"
 
 #include <atomic>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace localsend {
+
+class HttpStream;
 
 struct HttpRequest {
   std::string method;
@@ -35,11 +39,18 @@ struct HttpResult {
 };
 
 HttpResult http_get(const std::string& host, int port, const std::string& path);
+HttpResult https_get(const std::string& host, int port, const std::string& path, const std::string& expected_fingerprint = "");
 HttpResult http_post(const std::string& host,
                      int port,
                      const std::string& path,
                      const std::string& body,
                      const std::string& content_type = "application/json");
+HttpResult https_post(const std::string& host,
+                      int port,
+                      const std::string& path,
+                      const std::string& body,
+                      const std::string& content_type = "application/json",
+                      const std::string& expected_fingerprint = "");
 HttpResult http_post_chunked(const std::string& host,
                              int port,
                              const std::string& path,
@@ -49,6 +60,7 @@ HttpResult http_post_chunked(const std::string& host,
 class LocalSendServer {
 public:
   LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox);
+  LocalSendServer(InfoRegisterDto self, std::filesystem::path inbox, TlsCredentials tls_credentials);
   ~LocalSendServer();
 
   LocalSendServer(const LocalSendServer&) = delete;
@@ -78,11 +90,12 @@ private:
 
   HttpResponse handle_info() const;
   HttpResponse handle_prepare_upload(const HttpRequest& request, bool v2);
-  HttpResponse handle_upload(int client_fd, const HttpRequest& request, const std::string& initial_body, bool v2);
+  HttpResponse handle_upload(HttpStream& stream, const HttpRequest& request, const std::string& initial_body, bool v2);
   HttpResponse handle_cancel(const HttpRequest& request);
 
   InfoRegisterDto self_;
   std::filesystem::path inbox_;
+  std::optional<TlsCredentials> tls_credentials_;
   int listen_fd_ = -1;
   int port_ = 0;
   std::atomic<bool> running_{false};

@@ -136,6 +136,61 @@ void test_mbedtls_linked() {
 #endif
 }
 
+const std::string& test_tls_certificate() {
+  static const std::string certificate = R"(-----BEGIN CERTIFICATE-----
+MIIDEzCCAfugAwIBAgIUZAO97Ffzy9Gp+mEPoGoUsNQG6bUwDQYJKoZIhvcNAQEL
+BQAwGTEXMBUGA1UEAwwOTG9jYWxTZW5kIFVzZXIwHhcNMjYwNzA4MDQ0MTMwWhcN
+MzYwNzA1MDQ0MTMwWjAZMRcwFQYDVQQDDA5Mb2NhbFNlbmQgVXNlcjCCASIwDQYJ
+KoZIhvcNAQEBBQADggEPADCCAQoCggEBAM+nwggiabq3hjx+saaPohPLJEUg1Jnx
+4iQ5c0Z7T+zH7AkXrQwoR7RkZNMYaPXx7qTlDQxe0WEDexbtoeKCSDB3u3/4GkOL
+G0YgNeVrxGxN8DuaRleMRxS/Z1VoVPaZadNs0zjp931V5Zm2dFrnocERDjX6iWdZ
+lv9g/SF1EU0hdbprZSKrZSFt9ZCgXIDCnb/1MPle5yW1CuT4y6s9RVzFVJflKPU5
+4t0SIB0sVWFxqKKU207nBUfCldqyn+CUll+OsOFtmgsSrvV8QwOVLylIwKCi2Njj
+/mfIrYyNkDSP0IalQwln3VPdi3dUbgYw5WMed/rd7rYn4QhjRTvi2VECAwEAAaNT
+MFEwHQYDVR0OBBYEFHlwJYjjkjW5OPAsdyTE7w6cCzvcMB8GA1UdIwQYMBaAFHlw
+JYjjkjW5OPAsdyTE7w6cCzvcMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQEL
+BQADggEBADpNbCblsdB9y2nvMEz4wTQambJQvYfTgPBOYgPa5nQxGc1wbFHiBr13
+QRzN/uNATcUNKtmJve3br/sea4Jr10VAX50pdrE+6v4c572UCG2/JrOu+k1fT+55
+iiaf1AR5FwU/MRC9eBESoOXy3JXsM8S9ZILfIqmfV+ca+S53rhhrrYjedRnLJkS0
+IN3Kvbzjy0o8VRMxCGuwB4iAgjiwpvNL5JZSw2rhf+C1KiGhjA+ldD3qonIxekMK
+zPo1oE1CUoAI2vUUEG0egmZ+MB9KFd5f09PZGcYOwmBLjU4/clJAnj4924axxVAd
+7XYy3eHGG4xk8GDyn7+fTaw2fgdBR+c=
+-----END CERTIFICATE-----)";
+  return certificate;
+}
+
+const std::string& test_tls_private_key() {
+  static const std::string private_key = R"(-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDPp8IIImm6t4Y8
+frGmj6ITyyRFINSZ8eIkOXNGe0/sx+wJF60MKEe0ZGTTGGj18e6k5Q0MXtFhA3sW
+7aHigkgwd7t/+BpDixtGIDXla8RsTfA7mkZXjEcUv2dVaFT2mWnTbNM46fd9VeWZ
+tnRa56HBEQ41+olnWZb/YP0hdRFNIXW6a2Uiq2UhbfWQoFyAwp2/9TD5XucltQrk
++MurPUVcxVSX5Sj1OeLdEiAdLFVhcaiilNtO5wVHwpXasp/glJZfjrDhbZoLEq71
+fEMDlS8pSMCgotjY4/5nyK2MjZA0j9CGpUMJZ91T3Yt3VG4GMOVjHnf63e62J+EI
+Y0U74tlRAgMBAAECggEAM9vygjON8hqJRKxjU3SFhqnx6e20Cqo0ztUmK9D5+elH
+0lF+Xw3kMnHsGCf9doawEbA+XPuFENRctjIsfrQIsUoFooTkkj+4VQAQVbZfPKkO
+OORjctPOoKjYdqTyqw9PNYT1Dz6nFz8Pcx702gsFA4Ft6h8il5PxOOAQ930UEA26
+d7xsfSzBREqt94SwdXkmXTrPdb9DQJh5+mve6sUvvVJg2OXtncwW18q4dsh3LONn
+ATLsQXc5tFOPAXu5fihfmT4fBLEyZ5fNigfmxY3paGNKtXY4ChJNay8SVBR34mgW
+akxziAqqSc0uJHLcNpkiLOFM5nvON/fYW0hS2r1tjQKBgQD9r/60ipcYhP4m263n
+bPiYip0lFhkdAy8vc4BTMRCu6qPhy7AhKFwSxM2AkHREtkMp7CDO44dI5sREFAWy
+w7SMjxGIHl+oNaUu6vWGWP7rU9OR7t5HmgUWxdryjy17/rssTLW+FCiuOAWRrS+h
+9aCnLNPJTwNDeXd51oeDuBGhewKBgQDRjFeiGdXKPZ7WKiL2DWXjQs7stMKLRmR4
+R4nvw0uYpK5nkB33napz5ECNceU41G8kUAkiM5r/cJlppNkE66uA1aOl8Q1NRo64
+ViUPgsT0YygFz+Tb0YR9p9VWdhDzVZkxJdK1/ExFQ9y7RwX1OanF5keGthqRZrtQ
+y2XRo9iYowKBgCW212fhvqq/gsUmHYltMtwCp3APA/bDNW2Zfzde8PsAGRMFZA7Z
+4C5OIbr+PrrEWeHOn+YB/2fAHud8DojP/XR0BIg288OfDgqWlZ++dU9o6+gjGdqN
+NDp5eZ5b2Mg5S3w/fzld59pWq8VHePBcAuE3kdi4rWSHl1J+qTDU2ZInAoGAcTXg
+Voycq2H1QYGMV+DPLiP3BX13KaXDPBRyWl3pprM6ImuDNTcyUuB7W6+wBq8GyNiQ
+xrCYye68g43zTaxBgR5rBokgBaLcEo1AAoxE+j/j7Jfv7i7Y5MZbBRZOfBi/5gSo
+PXfsgPNz+p4Zgu4/YdLSy93wpqOZCcKJ5OQfbf8CgYEApBY3ilFEE0Zw80bFX20N
+qoLDwY7lxiCjGQ5UcIVkfHEAzY82IdBuNnL3Jt4S+wcbhupM6/tCDszGdUc9k6wQ
+K+TP1E/eXjTp2xnYhSTFy4KrQA+qOMWPMrS1oYJcPH/i8S690DVTJawSpva3qgtL
+BdqGLvSTqbINqoRmcdIP1Qo=
+-----END PRIVATE KEY-----)";
+  return private_key;
+}
+
 void test_tls_loopback() {
   const std::string certificate = R"(-----BEGIN CERTIFICATE-----
 MIIDEzCCAfugAwIBAgIUZAO97Ffzy9Gp+mEPoGoUsNQG6bUwDQYJKoZIhvcNAQEL
@@ -338,6 +393,64 @@ void test_http_server_routes_and_upload() {
   std::ifstream in(received, std::ios::binary);
   std::vector<char> actual((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   require(actual == expected, "uploaded file content mismatch");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
+void test_https_server_routes_and_upload() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-https-tests";
+  const auto source_dir = dir / "source";
+  const auto inbox_dir = dir / "inbox";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(source_dir);
+  std::filesystem::create_directories(inbox_dir);
+
+  const std::string fingerprint = localsend::certificate_fingerprint_from_pem(test_tls_certificate());
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Secure Receiver";
+  self.port = 0;
+  self.protocol = localsend::ProtocolType::Https;
+  self.fingerprint = fingerprint;
+
+  localsend::LocalSendServer server(self, inbox_dir, {test_tls_certificate(), test_tls_private_key()});
+  require(server.start(0), "HTTPS server failed to start");
+
+  const auto info = localsend::https_get("127.0.0.1", server.port(), localsend::kRouteInfo, fingerprint);
+  require(info.status == 200, "HTTPS info route failed");
+  const auto info_json = localsend::Json::parse(info.body);
+  const auto decoded_info = localsend::info_from_json(info_json);
+  require(decoded_info.alias == "Secure Receiver", "HTTPS info body failed");
+  require(info_json.at("protocol").as_string() == "https", "HTTPS info protocol failed");
+  require(decoded_info.fingerprint == fingerprint, "HTTPS info fingerprint failed");
+
+  const auto source = source_dir / "secure.txt";
+  {
+    std::ofstream out(source, std::ios::binary);
+    out << "secure localsend upload";
+  }
+
+  localsend::Device target;
+  target.ip = "127.0.0.1";
+  target.version = localsend::kProtocolVersion;
+  target.port = server.port();
+  target.https = true;
+  target.fingerprint = fingerprint;
+
+  localsend::InfoRegisterDto sender;
+  sender.alias = "Secure Sender";
+  sender.port = 12345;
+  sender.protocol = localsend::ProtocolType::Https;
+  sender.fingerprint = fingerprint;
+
+  require(localsend::send_single_file_http(target, source, sender), "single file HTTPS send failed");
+  require(std::filesystem::exists(inbox_dir / "secure.txt"), "HTTPS uploaded file missing");
+  require(std::filesystem::file_size(inbox_dir / "secure.txt") == std::filesystem::file_size(source), "HTTPS uploaded size mismatch");
+
+  localsend::Device bad_target = target;
+  bad_target.fingerprint = std::string(64, '0');
+  require(!localsend::send_single_file_http(bad_target, source, sender), "HTTPS send should reject wrong fingerprint");
 
   server.stop();
   std::filesystem::remove_all(dir);
@@ -723,6 +836,7 @@ int main() {
     test_safe_filename();
     test_unique_destination();
     test_http_server_routes_and_upload();
+    test_https_server_routes_and_upload();
     test_http_send_multiple_files();
     test_http_v1_legacy_routes();
     test_http_cancel_rejects_upload();

@@ -61,7 +61,18 @@ resolve_artifact_dir() {
 ftp_put_switch() {
   local src="$1"
   local dst="$2"
+  local tmp="${dst}.upload-$$"
   require_switch_password
+  if curl --user "${SWITCH_FTP_USER}:${SWITCH_FTP_PASS}" \
+    --connect-timeout 8 --max-time 120 --ftp-create-dirs \
+    -T "${src}" \
+    -Q "+RNFR ${tmp}" \
+    -Q "+RNTO ${dst}" \
+    "ftp://${SWITCH_HOST}:${SWITCH_FTP_PORT}/${tmp}"; then
+    return
+  fi
+
+  echo "Atomic FTP upload failed; retrying direct upload." >&2
   curl --user "${SWITCH_FTP_USER}:${SWITCH_FTP_PASS}" \
     --connect-timeout 8 --max-time 120 --ftp-create-dirs \
     -T "${src}" "ftp://${SWITCH_HOST}:${SWITCH_FTP_PORT}/${dst}"
@@ -85,6 +96,16 @@ require_switch_password() {
 ftp_put_psv() {
   local src="$1"
   local dst="$2"
+  local tmp="${dst}.upload-$$"
+  if curl --connect-timeout 8 --max-time 120 --ftp-create-dirs \
+    -T "${src}" \
+    -Q "+RNFR ${tmp}" \
+    -Q "+RNTO ${dst}" \
+    "ftp://${PSV_HOST}:${PSV_FTP_PORT}/${tmp}"; then
+    return
+  fi
+
+  echo "Atomic FTP upload failed; retrying direct upload." >&2
   curl --connect-timeout 8 --max-time 120 --ftp-create-dirs \
     -T "${src}" "ftp://${PSV_HOST}:${PSV_FTP_PORT}/${dst}"
 }

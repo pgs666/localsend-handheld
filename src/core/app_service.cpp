@@ -86,6 +86,7 @@ bool AppService::start_server() {
   self_ = make_self_info();
   try {
     if (options_.enable_tls) {
+#if LOCALSEND_HAS_MBEDTLS
       const TlsIdentity identity = load_or_create_tls_identity(config_.certificate_path, config_.private_key_path);
       self_.protocol = ProtocolType::Https;
       self_.fingerprint = identity.fingerprint;
@@ -93,6 +94,9 @@ bool AppService::start_server() {
                                                   config_.inbox_path,
                                                   TlsCredentials{identity.certificate_pem, identity.private_key_pem},
                                                   &transfers_);
+#else
+      return false;
+#endif
     } else {
       self_.protocol = ProtocolType::Http;
       self_.fingerprint.clear();

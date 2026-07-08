@@ -34,15 +34,6 @@ set(USE_SYSTEM_TWEENY OFF CACHE BOOL "" FORCE)
 set(BRLS_UNITY_BUILD OFF CACHE BOOL "" FORCE)
 set(BRLS_RESOURCES_DIR "app0:" CACHE STRING "" FORCE)
 
-set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
-set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
-set(MBEDTLS_USER_CONFIG_FILE "${CMAKE_CURRENT_LIST_DIR}/src/mbedtls_vita_config.h" CACHE FILEPATH "" FORCE)
-set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
-set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
-add_subdirectory(${PROJECT_ROOT}/third_party/mbedtls
-  ${CMAKE_CURRENT_BINARY_DIR}/mbedtls EXCLUDE_FROM_ALL)
-
 add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../third_party/borealis/library
   ${CMAKE_CURRENT_BINARY_DIR}/borealis)
 
@@ -56,8 +47,6 @@ add_library(localsend-core-psv STATIC
   ${PROJECT_ROOT}/src/core/json.cpp
   ${PROJECT_ROOT}/src/core/protocol.cpp
   ${PROJECT_ROOT}/src/core/safe_path.cpp
-  ${PROJECT_ROOT}/src/core/security.cpp
-  ${PROJECT_ROOT}/src/core/tls.cpp
   ${PROJECT_ROOT}/src/core/transfer.cpp
 )
 
@@ -71,7 +60,7 @@ target_include_directories(localsend-core-psv PUBLIC
 )
 
 target_compile_definitions(localsend-core-psv PUBLIC
-  LOCALSEND_HAS_MBEDTLS=1
+  LOCALSEND_HAS_MBEDTLS=0
   LOCALSEND_PLATFORM_PSV=1
 )
 
@@ -81,9 +70,6 @@ target_compile_options(localsend-core-psv PRIVATE
 )
 
 target_link_libraries(localsend-core-psv PUBLIC
-  mbedtls
-  mbedx509
-  mbedcrypto
   -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
 )
 
@@ -98,9 +84,6 @@ set_target_properties(localsend-core-psv-smoke PROPERTIES
 
 target_link_libraries(localsend-core-psv-smoke PRIVATE
   -Wl,--whole-archive localsend-core-psv -Wl,--no-whole-archive
-  mbedtls
-  mbedx509
-  mbedcrypto
 )
 
 add_executable(localsend-handheld-psv

@@ -75,6 +75,7 @@ private:
   int fd_ = -1;
 };
 
+#if LOCALSEND_HAS_MBEDTLS
 class TlsStream final : public HttpStream {
 public:
   explicit TlsStream(TlsConnection connection) : connection_(std::move(connection)) {}
@@ -94,6 +95,7 @@ public:
 private:
   TlsConnection connection_;
 };
+#endif
 
 void set_socket_timeouts(int fd) {
   timeval timeout{};
@@ -495,6 +497,7 @@ std::unique_ptr<HttpStream> connect_http_stream(const std::string& host, int por
     return std::make_unique<TcpStream>(fd);
   }
 
+#if LOCALSEND_HAS_MBEDTLS
   try {
     auto tls = TlsConnection::client(fd);
     if (!tls.handshake()) {
@@ -511,6 +514,10 @@ std::unique_ptr<HttpStream> connect_http_stream(const std::string& host, int por
     close_fd(fd);
     return nullptr;
   }
+#else
+  close_fd(fd);
+  return nullptr;
+#endif
 }
 
 HttpResult request_raw(const std::string& host,
@@ -775,6 +782,7 @@ void LocalSendServer::accept_loop() {
 void LocalSendServer::handle_client(int client_fd) {
   std::unique_ptr<HttpStream> stream;
   if (tls_credentials_) {
+#if LOCALSEND_HAS_MBEDTLS
     try {
       auto tls = TlsConnection::server(client_fd, *tls_credentials_);
       if (!tls.handshake()) {
@@ -786,6 +794,10 @@ void LocalSendServer::handle_client(int client_fd) {
       close_fd(client_fd);
       return;
     }
+#else
+    close_fd(client_fd);
+    return;
+#endif
   } else {
     stream = std::make_unique<TcpStream>(client_fd);
   }

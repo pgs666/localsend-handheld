@@ -31,9 +31,11 @@ void log_line(const std::string& line) {
 
 struct RuntimeState {
   bool server_started = false;
+  bool discovery_started = false;
   int server_port = 53317;
   std::string ip = "-";
   std::string server_status = "Not started";
+  std::string discovery_status = "Not started";
 };
 
 struct PanelRefs {
@@ -113,7 +115,7 @@ brls::View* make_panel(const HandheldAppConfig& config, const RuntimeState& stat
   root->addView(make_row("Info endpoint",
                          scheme + "://" + state.ip + ":" + std::to_string(state.server_port) +
                              "/api/localsend/v2/info"));
-  root->addView(make_row("Discovery", config.enable_discovery ? "Ready" : "Disabled", &refs.discovery_status));
+  root->addView(make_row("Discovery", state.discovery_status, &refs.discovery_status));
   root->addView(make_row("File browser", "Core exists; controller UI pending"));
 
   root->addView(make_section("Peers"));
@@ -142,6 +144,9 @@ void refresh_panel(const RuntimeState& state, const PanelRefs& refs) {
   }
   if (refs.discovery_status && !state.server_started) {
     refs.discovery_status->setText("Server not started");
+  }
+  if (refs.discovery_status && state.server_started) {
+    refs.discovery_status->setText(state.discovery_status);
   }
 }
 
@@ -182,15 +187,23 @@ std::unique_ptr<AppService> start_service(const HandheldAppConfig& app_config, R
     state.server_port = service->status().port;
     state.server_status = "Started";
     log_line("Receive server started on port " + std::to_string(state.server_port));
-    if (app_config.platform != PlatformKind::Switch) {
-      if (service->announce_once()) {
-        log_line("Discovery announcement sent");
+    if (app_config.enable_discovery) {
+      const bool announced = service->announce_once();
+      log_line(announced ? "Discovery announcement sent" : "Discovery announcement failed");
+      state.discovery_started = service->start_discovery();
+      if (state.discovery_started) {
+        state.discovery_status = "Scanning and announcing";
+        log_line("Discovery scan loop started");
       } else {
-        log_line("Discovery announcement failed");
+        state.discovery_status = announced ? "Announce-only fallback" : "Failed";
+        log_line("Discovery scan loop failed");
       }
+    } else {
+      state.discovery_status = "Disabled";
     }
   } else {
     state.server_status = "Failed to start";
+    state.discovery_status = "Server not started";
     log_line("Receive server failed to start");
   }
   return service;
@@ -288,7 +301,6 @@ int run_handheld_app(const HandheldAppConfig& config) {
         log_line(state.server_status);
       }
       refresh_panel(state, refs);
-      refresh_discovery_status(state.server_started ? "Waiting for periodic announce" : "Server not started", refs);
       next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     }
 
@@ -296,7 +308,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
       service->poll_server_once();
     }
 
-    if (service && state.server_started && config.enable_discovery &&
+    if (service && state.server_started && config.enable_discovery && !state.discovery_started &&
         std::chrono::steady_clock::now() >= next_announce) {
       const bool ok = service->announce_once();
       refresh_discovery_status(ok ? "Periodic announce sent" : "Periodic announce failed", refs);

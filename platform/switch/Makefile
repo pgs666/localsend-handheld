@@ -21,7 +21,7 @@ CFLAGS := -g -Wall -O2 -ffunction-sections
 CFLAGS += $(ARCH) $(DEFINES)
 CXXFLAGS := $(CFLAGS) -fno-rtti -fno-exceptions -std=gnu++17
 ASFLAGS := -g $(ARCH)
-LDFLAGS = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -Wl,-Map,$(notdir $*.map)
+LDFLAGS = -specs=$(DEVKITPRO)/libnx/switch.specs -g $(ARCH) -L$(DEVKITPRO)/libnx/lib -Wl,-Map,$(notdir $*.map)
 LIBS := -lnx
 
 ifneq ($(BUILD),$(notdir $(CURDIR)))

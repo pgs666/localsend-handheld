@@ -2,8 +2,8 @@
 
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
+#include <mbedtls/ecp.h>
 #include <mbedtls/pk.h>
-#include <mbedtls/rsa.h>
 #include <mbedtls/version.h>
 #include <mbedtls/x509_crt.h>
 #if MBEDTLS_VERSION_NUMBER < 0x03000000
@@ -168,20 +168,19 @@ TlsIdentity generate_tls_identity() {
     throw std::runtime_error(mbedtls_error_text("RNG seed", result));
   }
 
-  result = mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_RSA));
+  result = mbedtls_pk_setup(&key, mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY));
   if (result != 0) {
     cleanup();
     throw std::runtime_error(mbedtls_error_text("key setup", result));
   }
 
-  result = mbedtls_rsa_gen_key(mbedtls_pk_rsa(key),
+  result = mbedtls_ecp_gen_key(MBEDTLS_ECP_DP_SECP256R1,
+                               mbedtls_pk_ec(key),
                                mbedtls_ctr_drbg_random,
-                               &ctr_drbg,
-                               2048,
-                               65537);
+                               &ctr_drbg);
   if (result != 0) {
     cleanup();
-    throw std::runtime_error(mbedtls_error_text("RSA key generation", result));
+    throw std::runtime_error(mbedtls_error_text("EC key generation", result));
   }
 
   unsigned char serial[16] = {};

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.18)
 
-project(localsend_handheld VERSION 0.1.0 LANGUAGES CXX)
+project(localsend_handheld VERSION 0.1.0 LANGUAGES C CXX)
 
 option(PLATFORM_DESKTOP "Build the desktop protocol prototype" ON)
 option(PLATFORM_SWITCH "Build the Nintendo Switch homebrew target" OFF)
@@ -14,6 +14,13 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+set(ENABLE_PROGRAMS OFF CACHE BOOL "Do not build Mbed TLS programs" FORCE)
+set(ENABLE_TESTING OFF CACHE BOOL "Do not build Mbed TLS tests" FORCE)
+set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "Do not treat Mbed TLS warnings as fatal" FORCE)
+set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "Do not build shared Mbed TLS libraries" FORCE)
+set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "Build static Mbed TLS libraries" FORCE)
+add_subdirectory(third_party/mbedtls EXCLUDE_FROM_ALL)
 
 add_library(localsend_core
   src/core/config.cpp
@@ -32,7 +39,8 @@ target_include_directories(localsend_core
 
 target_compile_features(localsend_core PUBLIC cxx_std_17)
 find_package(Threads REQUIRED)
-target_link_libraries(localsend_core PUBLIC Threads::Threads)
+target_link_libraries(localsend_core PUBLIC Threads::Threads mbedtls mbedx509 mbedcrypto)
+target_compile_definitions(localsend_core PUBLIC LOCALSEND_HAS_MBEDTLS=1)
 
 if(MSVC)
   target_compile_options(localsend_core PRIVATE /W4)

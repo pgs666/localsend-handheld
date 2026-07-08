@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Configure
         run: cmake -S . -B build -DPLATFORM_DESKTOP=ON -DLOCALSEND_BUILD_TESTS=ON
       - name: Build
@@ -25,6 +27,8 @@ jobs:
     container: devkitpro/devkita64:latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Build .nro
         working-directory: platform/switch
         run: make -j2
@@ -40,6 +44,8 @@ jobs:
     container: vitasdk/vitasdk:latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Configure
         working-directory: platform/psv
         run: cmake -S . -B build
@@ -51,4 +57,3 @@ jobs:
         with:
           name: localsend-handheld-psv-vpk
           path: platform/psv/build/localsend-handheld.vpk
-

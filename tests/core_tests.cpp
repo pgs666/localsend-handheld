@@ -19,6 +19,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#if LOCALSEND_HAS_MBEDTLS
+#include <mbedtls/version.h>
+#endif
+
 namespace {
 
 void require(bool condition, const char* message) {
@@ -121,6 +125,14 @@ VCUMCMmX5tNBCQ8q4QG99msObKjrj3o=
   require(localsend::certificate_der_from_pem(certificate).size() > 0, "certificate DER extraction failed");
   require(localsend::certificate_fingerprint_from_pem(certificate) == "4ced1a640a8d0b577eb2b79537957153643d387e2c74f8ceadb3424ce64e6954",
           "certificate fingerprint failed");
+}
+
+void test_mbedtls_linked() {
+#if LOCALSEND_HAS_MBEDTLS
+  require(mbedtls_version_get_number() >= 0x03060700, "mbedTLS version is older than pinned release");
+#else
+  require(false, "mbedTLS should be enabled");
+#endif
 }
 
 void test_route_constants() {
@@ -605,6 +617,7 @@ int main() {
     test_prepare_upload_response_dto();
     test_multicast_dto();
     test_security_fingerprint();
+    test_mbedtls_linked();
     test_route_constants();
     test_default_config_paths();
     test_config_round_trip();

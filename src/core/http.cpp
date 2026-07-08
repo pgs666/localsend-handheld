@@ -339,6 +339,35 @@ bool read_chunked_body_to_string(int fd, const std::string& initial_body, std::s
   return true;
 }
 
+bool response_version_is_legacy_v1(const std::string& body) {
+  try {
+    return info_from_json(Json::parse(body)).version == "1.0";
+  } catch (const std::exception&) {
+    return false;
+  }
+}
+
+bool target_uses_v2_api(const Device& target) {
+  if (target.version == "1.0") {
+    return false;
+  }
+  if (!target.version.empty()) {
+    return true;
+  }
+
+  const HttpResult v2_info = http_get(target.ip, target.port, kRouteInfo);
+  if (v2_info.status == 200) {
+    return !response_version_is_legacy_v1(v2_info.body);
+  }
+
+  const HttpResult v1_info = http_get(target.ip, target.port, kRouteInfoV1);
+  if (v1_info.status == 200) {
+    return !response_version_is_legacy_v1(v1_info.body);
+  }
+
+  return true;
+}
+
 bool parse_response(int fd, HttpResult& result) {
   std::string buffer;
   if (!recv_until_headers(fd, buffer)) {
@@ -820,7 +849,7 @@ bool send_files_http(const Device& target, const std::vector<std::filesystem::pa
     request.files.emplace(file.id, file);
   }
 
-  const bool v2 = target.version != "1.0";
+  const bool v2 = target_uses_v2_api(target);
   const HttpResult prepared = http_post(target.ip, target.port, v2 ? kRoutePrepareUpload : kRoutePrepareUploadV1, to_json(request).dump());
   if (prepared.status != 200) {
     return false;

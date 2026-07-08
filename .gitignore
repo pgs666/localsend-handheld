@@ -1,0 +1,9 @@
+build/
+cmake-build-*/
+*.nro
+*.vpk
+*.elf
+*.self
+*.log
+local_config.json
+

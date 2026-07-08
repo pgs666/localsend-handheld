@@ -8,6 +8,7 @@
 #include "localsend/protocol.hpp"
 #include "localsend/safe_path.hpp"
 #include "localsend/security.hpp"
+#include "localsend/status_format.hpp"
 #include "localsend/tls.hpp"
 #include "localsend/transfer.hpp"
 
@@ -242,6 +243,49 @@ void test_device_store_offline_remove_and_clear() {
   store.upsert_discovered(device);
   store.clear();
   require(store.snapshot().empty(), "device clear failed");
+}
+
+void test_status_format_summaries() {
+  std::vector<localsend::DeviceEntry> devices;
+  localsend::DeviceEntry device;
+  device.key = "endpoint:192.168.1.10:53317";
+  device.device.ip = "192.168.1.10";
+  device.device.port = 53317;
+  device.device.alias = "MateBook";
+  device.device.https = true;
+  device.source = localsend::DeviceSource::Manual;
+  device.online = true;
+  devices.push_back(device);
+
+  const std::string device_summary = localsend::format_device_summary(devices);
+  require(device_summary.find("online MateBook [https] 192.168.1.10:53317 (manual)") != std::string::npos,
+          "device summary failed");
+  require(localsend::format_device_summary({}) == "No peers yet", "empty device summary failed");
+
+  std::vector<localsend::TransferItem> transfers;
+  localsend::TransferItem old_item;
+  old_item.direction = localsend::TransferDirection::Receive;
+  old_item.status = localsend::TransferStatus::Completed;
+  old_item.file_name = "old.bin";
+  old_item.size = 4;
+  old_item.bytes_transferred = 4;
+  old_item.peer_alias = "Phone";
+  transfers.push_back(old_item);
+
+  localsend::TransferItem item;
+  item.direction = localsend::TransferDirection::Send;
+  item.status = localsend::TransferStatus::Transferring;
+  item.file_name = "demo.bin";
+  item.size = 100;
+  item.bytes_transferred = 40;
+  item.peer_alias = "MateBook";
+  transfers.push_back(item);
+
+  const std::string transfer_summary = localsend::format_transfer_summary(transfers, 1);
+  require(transfer_summary.find("send demo.bin -> MateBook [transferring, 40%]") != std::string::npos,
+          "transfer summary failed");
+  require(transfer_summary.find("+1 older") != std::string::npos, "transfer summary overflow failed");
+  require(localsend::format_transfer_summary({}) == "No transfers yet", "empty transfer summary failed");
 }
 
 void test_security_fingerprint() {
@@ -1552,6 +1596,7 @@ int main() {
     test_transfer_store_cancel_and_strings();
     test_device_store_upsert_and_sources();
     test_device_store_offline_remove_and_clear();
+    test_status_format_summaries();
     test_security_fingerprint();
     test_tls_identity_persistence();
     test_mbedtls_linked();

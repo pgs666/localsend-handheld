@@ -1,6 +1,7 @@
 #include "localsend/handheld_app.hpp"
 
 #include "localsend/app_service.hpp"
+#include "localsend/status_format.hpp"
 
 #include <borealis.hpp>
 
@@ -16,7 +17,7 @@ namespace localsend::handheld {
 namespace {
 
 constexpr const char* kProtocol = "LocalSend protocol 2.1";
-constexpr const char* kUiBuild = "switch-poll-server-applet-frame";
+constexpr const char* kUiBuild = "shared-status-refresh-applet-frame";
 
 FILE* g_log = nullptr;
 
@@ -38,6 +39,8 @@ struct RuntimeState {
 struct PanelRefs {
   brls::Label* server_status = nullptr;
   brls::Label* discovery_status = nullptr;
+  brls::Label* device_summary = nullptr;
+  brls::Label* transfer_summary = nullptr;
 };
 
 brls::Label* make_label(const std::string& text,
@@ -76,7 +79,7 @@ brls::Label* make_section(const std::string& text) {
   return label;
 }
 
-brls::Box* make_panel(const HandheldAppConfig& config, const RuntimeState& state, PanelRefs& refs) {
+brls::View* make_panel(const HandheldAppConfig& config, const RuntimeState& state, PanelRefs& refs) {
   const std::string scheme = config.enable_tls ? "https" : "http";
 
   auto* root = new brls::Box(brls::Axis::COLUMN);
@@ -113,6 +116,12 @@ brls::Box* make_panel(const HandheldAppConfig& config, const RuntimeState& state
   root->addView(make_row("Discovery", config.enable_discovery ? "Ready" : "Disabled", &refs.discovery_status));
   root->addView(make_row("File browser", "Core exists; controller UI pending"));
 
+  root->addView(make_section("Peers"));
+  root->addView(make_row("Known devices", "No peers yet", &refs.device_summary));
+
+  root->addView(make_section("Transfers"));
+  root->addView(make_row("Recent", "No transfers yet", &refs.transfer_summary));
+
   const std::string hint_text =
       config.platform == PlatformKind::Switch
           ? "Receive server starts automatically"
@@ -121,7 +130,10 @@ brls::Box* make_panel(const HandheldAppConfig& config, const RuntimeState& state
   hint->setMargins(24, 0, 0, 0);
   root->addView(hint);
 
-  return root;
+  auto* scroll = new brls::ScrollingFrame();
+  scroll->setGrow(1.0f);
+  scroll->setContentView(root);
+  return scroll;
 }
 
 void refresh_panel(const RuntimeState& state, const PanelRefs& refs) {
@@ -136,6 +148,16 @@ void refresh_panel(const RuntimeState& state, const PanelRefs& refs) {
 void refresh_discovery_status(const std::string& text, const PanelRefs& refs) {
   if (refs.discovery_status) {
     refs.discovery_status->setText(text);
+  }
+}
+
+void refresh_service_snapshot(const AppService& service, const PanelRefs& refs) {
+  const AppSnapshot snapshot = service.snapshot();
+  if (refs.device_summary) {
+    refs.device_summary->setText(format_device_summary(snapshot.devices));
+  }
+  if (refs.transfer_summary) {
+    refs.transfer_summary->setText(format_transfer_summary(snapshot.transfers));
   }
 }
 
@@ -243,6 +265,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
   log_line("Activity pushed; entering main loop");
 
   auto next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  auto next_snapshot_refresh = std::chrono::steady_clock::now();
   auto deferred_start = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   int loop_count = 0;
   while (brls::Application::mainLoop()) {
@@ -278,6 +301,11 @@ int run_handheld_app(const HandheldAppConfig& config) {
       const bool ok = service->announce_once();
       refresh_discovery_status(ok ? "Periodic announce sent" : "Periodic announce failed", refs);
       next_announce = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    }
+
+    if (service && std::chrono::steady_clock::now() >= next_snapshot_refresh) {
+      refresh_service_snapshot(*service, refs);
+      next_snapshot_refresh = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     }
   }
   log_line("mainLoop exited");

@@ -8,5 +8,6 @@ set(LOCALSEND_CORE_SOURCES
   ${PROJECT_ROOT}/src/core/json.cpp
   ${PROJECT_ROOT}/src/core/protocol.cpp
   ${PROJECT_ROOT}/src/core/safe_path.cpp
+  ${PROJECT_ROOT}/src/core/status_format.cpp
   ${PROJECT_ROOT}/src/core/transfer.cpp
 )

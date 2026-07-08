@@ -49,6 +49,14 @@ container_run() {
   shift
   detect_container_engine
   "${CONTAINER_ENGINE}" run --rm \
+    -e HTTP_PROXY \
+    -e HTTPS_PROXY \
+    -e ALL_PROXY \
+    -e NO_PROXY \
+    -e http_proxy \
+    -e https_proxy \
+    -e all_proxy \
+    -e no_proxy \
     -v "${ROOT_DIR}:/work" \
     -w /work \
     "${image}" \

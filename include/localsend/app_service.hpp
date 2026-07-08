@@ -89,6 +89,7 @@ public:
 
   bool send_files_to_device(const std::string& device_key, const std::vector<std::filesystem::path>& file_paths);
   bool start_send_to_device(const std::string& device_key, std::vector<std::filesystem::path> file_paths);
+  bool cancel_current_send();
   void wait_for_send_idle();
   bool send_running() const { return send_running_; }
   std::string last_send_error() const;
@@ -113,6 +114,7 @@ private:
   std::unique_ptr<LocalSendServer> server_;
   std::atomic<bool> discovery_running_{false};
   std::atomic<bool> send_running_{false};
+  SendFilesControl send_control_;
   mutable std::mutex send_status_mutex_;
   std::string last_send_error_;
 #if LOCALSEND_PLATFORM_PSV

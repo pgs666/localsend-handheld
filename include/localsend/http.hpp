@@ -45,7 +45,12 @@ struct HttpResult {
 
 struct SendFilesResult {
   bool ok = false;
+  bool cancelled = false;
   std::string error;
+};
+
+struct SendFilesControl {
+  std::atomic<bool> cancel_requested{false};
 };
 
 HttpResult http_get(const std::string& host, int port, const std::string& path);
@@ -140,6 +145,7 @@ bool send_files_http(const Device& target,
 SendFilesResult send_files_http_detailed(const Device& target,
                                          const std::vector<std::filesystem::path>& file_paths,
                                          const InfoRegisterDto& self,
-                                         TransferStore* transfers);
+                                         TransferStore* transfers,
+                                         SendFilesControl* control = nullptr);
 
 } // namespace localsend

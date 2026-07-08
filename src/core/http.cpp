@@ -643,7 +643,8 @@ HttpResult post_file_raw(const std::string& host,
                          const std::string& content_type,
                          bool use_tls = false,
                          const std::string& expected_fingerprint = "",
-                         const std::function<void(std::uint64_t)>& progress = nullptr) {
+                         const std::function<void(std::uint64_t)>& progress = nullptr,
+                         const std::function<bool()>& should_cancel = nullptr) {
   HttpResult result;
   auto stream = connect_http_stream(host, port, use_tls, expected_fingerprint);
   if (!stream) {
@@ -662,6 +663,11 @@ HttpResult post_file_raw(const std::string& host,
   std::vector<char> buffer(kTransferBufferSize);
   std::uint64_t uploaded = 0;
   while (ok && file) {
+    if (should_cancel && should_cancel()) {
+      result.body = "cancelled";
+      ok = false;
+      break;
+    }
     file.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
     const std::streamsize got = file.gcount();
     if (got > 0) {
@@ -672,8 +678,10 @@ HttpResult post_file_raw(const std::string& host,
       }
     }
   }
-  if (ok) {
+  if (ok && !(should_cancel && should_cancel())) {
     parse_response(*stream, result);
+  } else if (should_cancel && should_cancel()) {
+    result.body = "cancelled";
   }
   stream->close_notify();
   return result;
@@ -1221,11 +1229,19 @@ bool send_files_http(const Device& target,
 SendFilesResult send_files_http_detailed(const Device& target,
                                          const std::vector<std::filesystem::path>& file_paths,
                                          const InfoRegisterDto& self,
-                                         TransferStore* transfers) {
+                                         TransferStore* transfers,
+                                         SendFilesControl* control) {
   auto result_error = [](std::string message) {
     SendFilesResult result;
     result.ok = false;
     result.error = std::move(message);
+    return result;
+  };
+  auto result_cancelled = []() {
+    SendFilesResult result;
+    result.ok = false;
+    result.cancelled = true;
+    result.error = "send cancelled";
     return result;
   };
   auto result_ok = []() {
@@ -1256,12 +1272,38 @@ SendFilesResult send_files_http_detailed(const Device& target,
       }
     }
   };
-
+  auto cancel_requested = [control]() {
+    return control && control->cancel_requested.load();
+  };
+  auto cancel_transfers = [transfers](const std::vector<std::uint64_t>& transfer_ids) {
+    if (!transfers) {
+      return;
+    }
+    for (const std::uint64_t transfer_id : transfer_ids) {
+      if (transfer_id != 0) {
+        transfers->cancel(transfer_id);
+      }
+    }
+  };
   if (file_paths.empty()) {
     return result_error("no files selected");
   }
 
   const Device send_target = resolve_send_target(target);
+  auto send_cancel = [&send_target](const std::string& session_id, bool v2) {
+    if (!v2 || session_id.empty()) {
+      return;
+    }
+    const std::string path = std::string(kRouteCancel) + "?sessionId=" + session_id;
+    static_cast<void>(request_raw(send_target.ip,
+                                  send_target.port,
+                                  "POST",
+                                  path,
+                                  "",
+                                  "application/json",
+                                  send_target.https,
+                                  send_target.fingerprint));
+  };
 
   std::vector<FileDto> files;
   std::vector<std::uint64_t> transfer_ids;
@@ -1292,6 +1334,11 @@ SendFilesResult send_files_http_detailed(const Device& target,
     files.push_back(std::move(file));
   }
 
+  if (cancel_requested()) {
+    cancel_transfers(transfer_ids);
+    return result_cancelled();
+  }
+
   PrepareUploadRequestDto request;
   request.info = self;
   for (const auto& file : files) {
@@ -1309,6 +1356,10 @@ SendFilesResult send_files_http_detailed(const Device& target,
                                           send_target.https,
                                           send_target.fingerprint);
   debug_send_line("prepare status=" + std::to_string(prepared.status) + " body=" + prepared.body);
+  if (cancel_requested()) {
+    cancel_transfers(transfer_ids);
+    return result_cancelled();
+  }
   if (prepared.status == 204) {
     if (transfers) {
       for (const std::uint64_t transfer_id : transfer_ids) {
@@ -1352,6 +1403,11 @@ SendFilesResult send_files_http_detailed(const Device& target,
   bool all_uploaded = true;
   std::string first_error;
   for (std::size_t i = 0; i < files.size(); ++i) {
+    if (cancel_requested()) {
+      send_cancel(response.session_id, v2);
+      cancel_transfers(transfer_ids);
+      return result_cancelled();
+    }
     const FileDto& file = files[i];
     const std::uint64_t transfer_id = transfer_ids[i];
     const auto token = response.files.find(file.id);
@@ -1391,8 +1447,14 @@ SendFilesResult send_files_http_detailed(const Device& target,
                                                 if (transfers && transfer_id != 0) {
                                                   transfers->set_progress(transfer_id, bytes);
                                                 }
-                                              });
+                                              },
+                                              cancel_requested);
     debug_send_line("upload status=" + std::to_string(uploaded.status) + " body=" + uploaded.body);
+    if (cancel_requested()) {
+      send_cancel(response.session_id, v2);
+      cancel_transfers(transfer_ids);
+      return result_cancelled();
+    }
     if (uploaded.status != 200) {
       const std::string message = "upload failed file=" + file.file_name +
                                   " status=" + std::to_string(uploaded.status) +

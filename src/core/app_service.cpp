@@ -270,6 +270,7 @@ bool AppService::start_send_to_device(const std::string& device_key, std::vector
     return false;
   }
 
+  send_control_.cancel_requested = false;
   set_last_send_error("");
   send_running_ = true;
 #if LOCALSEND_PLATFORM_PSV
@@ -285,6 +286,16 @@ bool AppService::start_send_to_device(const std::string& device_key, std::vector
 #else
   send_thread_ = std::thread(&AppService::send_worker, this, entry->device, std::move(file_paths));
 #endif
+  return true;
+}
+
+bool AppService::cancel_current_send() {
+  if (!send_running_) {
+    set_last_send_error("no active send");
+    return false;
+  }
+  send_control_.cancel_requested = true;
+  set_last_send_error("send cancellation requested");
   return true;
 }
 
@@ -375,7 +386,7 @@ void AppService::discovery_loop(std::chrono::milliseconds interval, std::chrono:
 }
 
 void AppService::send_worker(Device device, std::vector<std::filesystem::path> file_paths) {
-  const SendFilesResult result = send_files_http_detailed(device, file_paths, self_, &transfers_);
+  const SendFilesResult result = send_files_http_detailed(device, file_paths, self_, &transfers_, &send_control_);
   set_last_send_error(result.ok ? "" : result.error);
   send_running_ = false;
 }

@@ -897,6 +897,8 @@ void test_app_service_send_start_errors() {
   const std::string key = service.add_manual_device("127.0.0.1", 9, false, "Loopback", "");
   require(!service.start_send_to_device(key, {}), "empty send file list should fail");
   require(service.status().last_send_error == "no files selected", "empty send file error failed");
+  require(!service.cancel_current_send(), "idle send cancel should fail");
+  require(service.status().last_send_error == "no active send", "idle send cancel error failed");
 }
 
 void test_safe_filename() {
@@ -1690,6 +1692,41 @@ void test_http_send_reports_prepare_failure() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_send_cancelled_before_prepare() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-send-cancel-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const auto source = dir / "cancel-before.txt";
+  {
+    std::ofstream out(source, std::ios::binary);
+    out << "cancel before prepare";
+  }
+
+  localsend::Device target;
+  target.ip = "127.0.0.1";
+  target.port = 9;
+  target.version = localsend::kProtocolVersion;
+  target.https = false;
+
+  localsend::InfoRegisterDto sender;
+  sender.alias = "Sender";
+  sender.port = 12345;
+  sender.protocol = localsend::ProtocolType::Http;
+
+  localsend::TransferStore transfers;
+  localsend::SendFilesControl control;
+  control.cancel_requested = true;
+  const localsend::SendFilesResult result = localsend::send_files_http_detailed(target, {source}, sender, &transfers, &control);
+  require(!result.ok, "cancelled send should fail");
+  require(result.cancelled, "cancelled send result flag failed");
+  require(result.error == "send cancelled", "cancelled send error failed");
+  const auto snapshot = transfers.snapshot();
+  require(snapshot.size() == 1, "cancelled send transfer count failed");
+  require(snapshot[0].status == localsend::TransferStatus::Cancelled, "cancelled send transfer status failed");
+
+  std::filesystem::remove_all(dir);
+}
+
 void test_http_send_treats_missing_tokens_as_skipped() {
   const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-send-skipped-tests";
   std::filesystem::remove_all(dir);
@@ -1865,6 +1902,7 @@ int main() {
     test_http_incomplete_upload_removes_partial_file();
     test_http_send_accepts_prepare_no_content();
     test_http_send_reports_prepare_failure();
+    test_http_send_cancelled_before_prepare();
     test_http_send_treats_missing_tokens_as_skipped();
     test_http_client_chunked_response();
   } catch (const std::exception& e) {

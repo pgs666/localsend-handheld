@@ -33,6 +33,33 @@ void log_line(const std::string& line) {
   std::fflush(g_log);
 }
 
+struct KeyLabels {
+  std::string send;
+  std::string cancel;
+  std::string next_peer;
+  std::string next_file;
+};
+
+KeyLabels key_labels_for_platform(PlatformKind platform) {
+  switch (platform) {
+  case PlatformKind::Switch:
+    return {"X", "B", "Y", "R"};
+  case PlatformKind::Psv:
+    return {"Square", "Circle", "Triangle", "R"};
+  case PlatformKind::Desktop:
+    return {"X", "B", "Y", "RB"};
+  }
+  return {"X", "B", "Y", "RB"};
+}
+
+std::string initial_send_prompt(const KeyLabels& keys) {
+  return "Select peer/file, then press " + keys.send;
+}
+
+std::string action_label(const std::string& action, const std::string& key) {
+  return action + " [" + key + "]";
+}
+
 struct RuntimeState {
   bool server_started = false;
   bool discovery_started = false;
@@ -43,7 +70,7 @@ struct RuntimeState {
   std::string discovery_status = "Not started";
   std::string file_browser_status = "Not checked";
   std::string selected_file_status = "No selectable files";
-  std::string send_status = "Select a peer, then press X";
+  std::string send_status = "Select peer/file, then press X";
   std::string last_send_error;
   std::size_t selected_file_index = 0;
   std::optional<std::size_t> selected_device_index;
@@ -180,10 +207,9 @@ brls::View* make_panel(const HandheldAppConfig& app_config,
   root->addView(make_section("Transfers"));
   root->addView(make_row("Recent", "No transfers yet", &refs.transfer_summary));
 
+  const KeyLabels keys = key_labels_for_platform(app_config.platform);
   const std::string hint_text =
-      app_config.platform == PlatformKind::Switch
-          ? "Receive server starts automatically"
-          : "Receive server starts automatically";
+      keys.send + " send  " + keys.next_peer + " peer  " + keys.next_file + " file  " + keys.cancel + " cancel";
   auto* hint = make_label(hint_text, 20, brls::HorizontalAlign::CENTER, 780);
   hint->setMargins(24, 0, 0, 0);
   root->addView(hint);
@@ -344,9 +370,11 @@ int run_handheld_app(const HandheldAppConfig& config) {
   brls::Application::setGlobalQuit(false);
 
   const AppConfig service_config = load_handheld_config(config);
+  const KeyLabels keys = key_labels_for_platform(config.platform);
   RuntimeState state;
   state.server_port = service_config.port;
   state.alias = service_config.alias;
+  state.send_status = initial_send_prompt(keys);
   state.ip = brls::Application::getPlatform()->getIpAddress();
   log_line("Detected IP: " + state.ip);
   log_line("Runtime alias: " + state.alias);
@@ -380,7 +408,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
 
   auto* frame = new brls::AppletFrame(panel);
   frame->setTitle("LocalSend Handheld");
-  frame->registerAction("Send test", brls::BUTTON_X, [&](brls::View*) {
+  frame->registerAction(action_label("Send", keys.send), brls::BUTTON_X, [&](brls::View*) {
     if (!service || !state.server_started) {
       state.send_status = "Receive server not ready";
       refresh_send_status(state.send_status, refs);
@@ -417,7 +445,26 @@ int run_handheld_app(const HandheldAppConfig& config) {
     refresh_send_status(state.send_status, refs);
     return true;
   });
-  frame->registerAction("Next peer", brls::BUTTON_Y, [&](brls::View*) {
+  frame->registerAction(action_label("Cancel send", keys.cancel), brls::BUTTON_B, [&](brls::View*) {
+    if (!service) {
+      state.send_status = "Receive server not ready";
+      refresh_send_status(state.send_status, refs);
+      log_line("Cancel send rejected: service not ready");
+      return true;
+    }
+
+    if (service->cancel_current_send()) {
+      state.send_status = "Cancelling send...";
+      log_line("Cancel send requested");
+    } else {
+      const std::string error = service->last_send_error();
+      state.send_status = error.empty() ? "No active send" : error;
+      log_line("Cancel send rejected: " + state.send_status);
+    }
+    refresh_send_status(state.send_status, refs);
+    return true;
+  });
+  frame->registerAction(action_label("Next peer", keys.next_peer), brls::BUTTON_Y, [&](brls::View*) {
     if (!service) {
       state.selected_peer_status = "Receive server not ready";
       if (refs.selected_peer) {
@@ -435,7 +482,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
     log_line("Selected peer: " + state.selected_peer_status);
     return true;
   });
-  frame->registerAction("Next file", brls::BUTTON_RB, [&](brls::View*) {
+  frame->registerAction(action_label("Next file", keys.next_file), brls::BUTTON_RB, [&](brls::View*) {
     ++state.selected_file_index;
     refresh_selected_file_status(service_config.outbox_path, state, refs);
     log_line("Selected file: " + state.selected_file_status);

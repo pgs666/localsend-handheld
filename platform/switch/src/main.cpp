@@ -473,9 +473,7 @@ std::string tls_peer_fingerprint(ClientConnection& connection) {
     return "";
   }
   unsigned char digest[32] = {};
-  if (mbedtls_sha256(peer->raw.p, peer->raw.len, digest, 0) != 0) {
-    return "";
-  }
+  mbedtls_sha256(peer->raw.p, peer->raw.len, digest, 0);
   return hex_encode(digest, sizeof(digest));
 }
 
@@ -696,24 +694,6 @@ bool read_chunked_body_string(int fd, const std::string& initial_body, std::stri
       pos = 0;
     }
   }
-}
-
-ClientHttpResult read_client_response(int fd) {
-  ClientHttpResult result;
-  std::string headers;
-  std::string initial_body;
-  if (!read_headers(fd, headers, initial_body)) {
-    return result;
-  }
-  result.status = status_code_from_headers(headers);
-  if (transfer_encoding_chunked(headers)) {
-    if (!read_chunked_body_string(fd, initial_body, result.body)) {
-      result.body.clear();
-    }
-  } else {
-    result.body = read_body_string(fd, initial_body, content_length(headers));
-  }
-  return result;
 }
 
 bool read_headers_stream(ClientConnection& connection, std::string& request, std::string& initial_body) {

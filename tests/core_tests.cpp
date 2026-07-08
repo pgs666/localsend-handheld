@@ -4,6 +4,7 @@
 #include "localsend/http.hpp"
 #include "localsend/protocol.hpp"
 #include "localsend/safe_path.hpp"
+#include "localsend/security.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -92,6 +93,34 @@ void test_multicast_dto() {
   require(device.alias == "Switch", "multicast alias failed");
   require(device.port == 53317, "multicast port failed");
   require(!device.https, "multicast protocol failed");
+}
+
+void test_security_fingerprint() {
+  const std::vector<std::uint8_t> abc = {'a', 'b', 'c'};
+  require(localsend::sha256_hex(abc) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "sha256 test vector failed");
+
+  const std::string certificate = R"(-----BEGIN CERTIFICATE-----
+MIIDEzCCAfugAwIBAgIUY6htbFfRtc1NPzwqLcjgnnNtajgwDQYJKoZIhvcNAQEL
+BQAwGTEXMBUGA1UEAwwOTG9jYWxTZW5kIFVzZXIwHhcNMjYwNzA4MDQyOTE0WhcN
+MzYwNzA1MDQyOTE0WjAZMRcwFQYDVQQDDA5Mb2NhbFNlbmQgVXNlcjCCASIwDQYJ
+KoZIhvcNAQEBBQADggEPADCCAQoCggEBAMYGYIfA2Lclrmnmi8UpAoTVUgki2KkV
+6LyVvRqMexc4u2rwq/t31/CFNCeSadJm3l3xrol/eWyqJiylwLbh3c0x9DaC+k8X
+dC5LKlAlWzY9HV6zN656QPKG1k5KxROoDW+XsVwWE2pIjmK5ejvp7lCr9xLPHgab
+02++1nb69FLkwu7bOs0Njt1MWX1FHCEBQOHNkYB5XXXknXbuYEw58zgow80mqnKr
+YVZQuWTa3/mQvHdRSfhmsca3pTUrg93Ip7Ywpdy/SWEMuBotIT7XPCU86ifiNubv
+3KyQJWB1tezn5hFIVpQSL5cjprUQvijMFWZeKMOvk+iBn435dJBHpgsCAwEAAaNT
+MFEwHQYDVR0OBBYEFNak+IojlJDpn8xHcespg7x2al1SMB8GA1UdIwQYMBaAFNak
++IojlJDpn8xHcespg7x2al1SMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQEL
+BQADggEBAGHuAcMxWZ3JL4nu4h2OS6/ywKZ/gLxEUGvTJs3EVF4bKy2Od+qds/DT
++db3jq3/iZgGesQaJ7FTL4eTgsClUVxTx7anJYm+Bi2xCLacGOQyb+O5XdBn57Qk
+rboFbidmAFody+K3aJtTYu3UldIR1CKPxz7vTXQqytrvRnsS3x+OpQwG6fsJyCG4
+QDiQ90W/IhNtLdUxz06JVXoBz7lumUAfvWOwdrnAmxBSWxi3mLyOxgSZUUjzKc1e
+UKEcKLl7Dcx7K6HHmbHHOPuuNG+oj+p5cz51IEQX1FM3FiR754vLc0mlC0dvolie
+VCUMCMmX5tNBCQ8q4QG99msObKjrj3o=
+-----END CERTIFICATE-----)";
+  require(localsend::certificate_der_from_pem(certificate).size() > 0, "certificate DER extraction failed");
+  require(localsend::certificate_fingerprint_from_pem(certificate) == "4ced1a640a8d0b577eb2b79537957153643d387e2c74f8ceadb3424ce64e6954",
+          "certificate fingerprint failed");
 }
 
 void test_route_constants() {
@@ -575,6 +604,7 @@ int main() {
     test_prepare_upload_dto();
     test_prepare_upload_response_dto();
     test_multicast_dto();
+    test_security_fingerprint();
     test_route_constants();
     test_default_config_paths();
     test_config_round_trip();

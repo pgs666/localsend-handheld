@@ -22,6 +22,7 @@ add_library(localsend_core
   src/core/json.cpp
   src/core/protocol.cpp
   src/core/safe_path.cpp
+  src/core/security.cpp
 )
 
 target_include_directories(localsend_core

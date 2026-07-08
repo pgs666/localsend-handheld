@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <string>
@@ -18,6 +19,9 @@ constexpr int kPort = 53317;
 constexpr int kBufferSize = 64 * 1024;
 constexpr int kMaxFiles = 16;
 constexpr const char* kInbox = "sdmc:/switch/localsend/inbox";
+constexpr const char* kOutbox = "sdmc:/switch/localsend/outbox";
+constexpr const char* kTargetPath = "sdmc:/switch/localsend/target.txt";
+constexpr const char* kDefaultSendTargetIp = "192.168.31.150";
 constexpr const char* kLogPath = "sdmc:/switch/localsend/localsend.log";
 constexpr const char* kMulticastGroup = "224.0.0.167";
 constexpr const char* kBroadcastAddress = "255.255.255.255";
@@ -40,8 +44,14 @@ struct UploadSession {
 
 UploadSession g_session;
 int g_received_files = 0;
+int g_sent_files = 0;
 char g_status[256] = "Starting";
 int g_announcements = 0;
+
+struct ClientHttpResult {
+  int status = 0;
+  std::string body;
+};
 
 void append_log(const std::string& line) {
   FILE* out = std::fopen(kLogPath, "ab");
@@ -420,6 +430,14 @@ bool read_headers(int fd, std::string& request, std::string& initial_body) {
   return true;
 }
 
+int status_code_from_headers(const std::string& headers) {
+  const size_t first_space = headers.find(' ');
+  if (first_space == std::string::npos) {
+    return 0;
+  }
+  return std::atoi(headers.c_str() + first_space + 1);
+}
+
 size_t content_length(const std::string& headers) {
   const std::string marker = "content-length:";
   std::string lower = headers;
@@ -467,6 +485,103 @@ std::string read_body_string(int fd, std::string body, size_t length) {
     body.resize(length);
   }
   return body;
+}
+
+ClientHttpResult read_client_response(int fd) {
+  ClientHttpResult result;
+  std::string headers;
+  std::string initial_body;
+  if (!read_headers(fd, headers, initial_body)) {
+    return result;
+  }
+  result.status = status_code_from_headers(headers);
+  result.body = read_body_string(fd, initial_body, content_length(headers));
+  return result;
+}
+
+int connect_tcp(const std::string& ip, int port) {
+  const int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) {
+    return -1;
+  }
+
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(static_cast<uint16_t>(port));
+  if (inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) != 1) {
+    close(fd);
+    return -1;
+  }
+  if (connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+    close(fd);
+    return -1;
+  }
+  return fd;
+}
+
+ClientHttpResult http_post_json(const std::string& ip, int port, const char* path, const std::string& body) {
+  ClientHttpResult result;
+  const int fd = connect_tcp(ip, port);
+  if (fd < 0) {
+    return result;
+  }
+
+  char header[512];
+  std::snprintf(header,
+                sizeof(header),
+                "POST %s HTTP/1.1\r\nHost: %s:%d\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: %zu\r\n\r\n",
+                path,
+                ip.c_str(),
+                port,
+                body.size());
+  if (send_all(fd, header, std::strlen(header)) && send_all(fd, body.data(), body.size())) {
+    result = read_client_response(fd);
+  }
+  close(fd);
+  return result;
+}
+
+ClientHttpResult http_post_file(const std::string& ip, int port, const std::string& path, const std::string& file_path, size_t size) {
+  ClientHttpResult result;
+  FILE* in = std::fopen(file_path.c_str(), "rb");
+  if (!in) {
+    return result;
+  }
+
+  const int fd = connect_tcp(ip, port);
+  if (fd < 0) {
+    std::fclose(in);
+    return result;
+  }
+
+  char header[512];
+  std::snprintf(header,
+                sizeof(header),
+                "POST %s HTTP/1.1\r\nHost: %s:%d\r\nConnection: close\r\nContent-Type: application/octet-stream\r\nContent-Length: %zu\r\n\r\n",
+                path.c_str(),
+                ip.c_str(),
+                port,
+                size);
+
+  bool ok = send_all(fd, header, std::strlen(header));
+  char* buffer = static_cast<char*>(std::malloc(kBufferSize));
+  while (ok) {
+    const size_t got = std::fread(buffer, 1, kBufferSize, in);
+    if (got > 0) {
+      ok = send_all(fd, buffer, got);
+    }
+    if (got < kBufferSize) {
+      break;
+    }
+  }
+  std::free(buffer);
+  std::fclose(in);
+
+  if (ok) {
+    result = read_client_response(fd);
+  }
+  close(fd);
+  return result;
 }
 
 bool fill_stream_buffer(int fd, std::string& buffer, size_t pos, size_t need) {
@@ -551,6 +666,132 @@ std::string first_target(const std::string& request) {
 
 bool first_method_is(const std::string& request, const char* method) {
   return starts_with(request, method) && request[std::strlen(method)] == ' ';
+}
+
+std::string filename_from_path(const std::string& path) {
+  const size_t slash = path.find_last_of('/');
+  return slash == std::string::npos ? path : path.substr(slash + 1);
+}
+
+bool read_send_target(std::string& ip, int& port) {
+  ip = kDefaultSendTargetIp;
+  port = kPort;
+  FILE* in = std::fopen(kTargetPath, "rb");
+  if (!in) {
+    return true;
+  }
+  char ip_buf[128] = {};
+  int parsed_port = 0;
+  const int matched = std::fscanf(in, "%127s %d", ip_buf, &parsed_port);
+  std::fclose(in);
+  if (matched < 1) {
+    return true;
+  }
+  ip = ip_buf;
+  if (matched >= 2 && parsed_port > 0 && parsed_port <= 65535) {
+    port = parsed_port;
+  }
+  return true;
+}
+
+bool first_outbox_file(std::string& path, size_t& size) {
+  DIR* dir = opendir(kOutbox);
+  if (!dir) {
+    return false;
+  }
+
+  bool found = false;
+  while (dirent* entry = readdir(dir)) {
+    if (entry->d_name[0] == '.') {
+      continue;
+    }
+    const std::string candidate = std::string(kOutbox) + "/" + entry->d_name;
+    struct stat st {};
+    if (stat(candidate.c_str(), &st) == 0 && S_ISREG(st.st_mode)) {
+      path = candidate;
+      size = static_cast<size_t>(st.st_size);
+      found = true;
+      break;
+    }
+  }
+  closedir(dir);
+  return found;
+}
+
+bool extract_prepare_response(const std::string& body, std::string& session_id, std::string& token) {
+  session_id = find_json_string(body, "sessionId", "");
+  const size_t files_start = files_object_start(body);
+  if (files_start == std::string::npos) {
+    return false;
+  }
+  size_t pos = files_start + 1;
+  pos = skip_ws(body, pos);
+  std::string key;
+  const size_t after_key = parse_json_string_at(body, pos, key);
+  if (after_key == std::string::npos) {
+    return false;
+  }
+  const size_t colon = body.find(':', after_key);
+  if (colon == std::string::npos) {
+    return false;
+  }
+  pos = skip_ws(body, colon + 1);
+  return parse_json_string_at(body, pos, token) != std::string::npos && !session_id.empty() && !token.empty();
+}
+
+void send_outbox_file() {
+  std::string ip;
+  int port = kPort;
+  if (!read_send_target(ip, port)) {
+    std::snprintf(g_status, sizeof(g_status), "Send failed: create target.txt");
+    append_log("send failed: missing target file");
+    return;
+  }
+
+  std::string file_path;
+  size_t file_size = 0;
+  if (!first_outbox_file(file_path, file_size)) {
+    std::snprintf(g_status, sizeof(g_status), "Send failed: outbox empty");
+    append_log("send failed: outbox empty");
+    return;
+  }
+
+  const std::string file_name = sanitize_filename(filename_from_path(file_path));
+  const std::string prepare =
+      "{\"info\":{\"alias\":\"LocalSend Switch\",\"version\":\"2.1\",\"deviceModel\":\"Nintendo Switch\","
+      "\"deviceType\":\"desktop\",\"fingerprint\":\"\",\"port\":53317,\"protocol\":\"http\",\"download\":false},"
+      "\"files\":{\"0\":{\"id\":\"0\",\"fileName\":\"" + json_escape(file_name) +
+      "\",\"size\":" + std::to_string(file_size) + ",\"fileType\":\"application/octet-stream\"}}}";
+
+  std::snprintf(g_status, sizeof(g_status), "Preparing send: %s", file_name.c_str());
+  append_log("send prepare target=" + ip + ":" + std::to_string(port) + " file=" + file_path + " size=" + std::to_string(file_size));
+  const ClientHttpResult prepared = http_post_json(ip, port, "/api/localsend/v2/prepare-upload", prepare);
+  if (prepared.status != 200) {
+    std::snprintf(g_status, sizeof(g_status), "Send prepare failed: %d", prepared.status);
+    append_log("send prepare failed status=" + std::to_string(prepared.status) + " body=" + prepared.body.substr(0, 512));
+    return;
+  }
+
+  std::string session_id;
+  std::string token;
+  if (!extract_prepare_response(prepared.body, session_id, token)) {
+    std::snprintf(g_status, sizeof(g_status), "Send failed: bad prepare response");
+    append_log("send bad prepare response=" + prepared.body.substr(0, 512));
+    return;
+  }
+
+  const std::string upload_path = "/api/localsend/v2/upload?sessionId=" + session_id + "&fileId=0&token=" + token;
+  std::snprintf(g_status, sizeof(g_status), "Sending: %s", file_name.c_str());
+  const ClientHttpResult uploaded = http_post_file(ip, port, upload_path, file_path, file_size);
+  if (uploaded.status != 200) {
+    std::snprintf(g_status, sizeof(g_status), "Send upload failed: %d", uploaded.status);
+    append_log("send upload failed status=" + std::to_string(uploaded.status) + " body=" + uploaded.body.substr(0, 512));
+    return;
+  }
+
+  ++g_sent_files;
+  std::snprintf(g_status, sizeof(g_status), "Sent: %s (%zu bytes)", file_name.c_str(), file_size);
+  append_log("send ok file=" + file_path + " bytes=" + std::to_string(file_size));
 }
 
 void handle_info(int fd) {
@@ -858,9 +1099,13 @@ void draw_status() {
   std::printf("Listening: http://<switch-ip>:%d\n", kPort);
   std::printf("Discovery: multicast+broadcast announcements=%d\n", g_announcements);
   std::printf("Inbox: %s\n", kInbox);
+  std::printf("Outbox: %s\n", kOutbox);
+  std::printf("Send target: %s\n", kTargetPath);
   std::printf("Encryption must be disabled on peers.\n\n");
   std::printf("Files received: %d\n", g_received_files);
+  std::printf("Files sent: %d\n", g_sent_files);
   std::printf("Status: %s\n\n", g_status);
+  std::printf("Press X to send first outbox file.\n");
   std::printf("Press + to exit.\n");
   consoleUpdate(nullptr);
 }
@@ -875,6 +1120,7 @@ int main(int argc, char* argv[]) {
   socketInitializeDefault();
   mkdir("sdmc:/switch/localsend", 0777);
   mkdir(kInbox, 0777);
+  mkdir(kOutbox, 0777);
   append_log("app started");
 
   int server = create_server();
@@ -896,6 +1142,10 @@ int main(int argc, char* argv[]) {
     const u64 pressed = padGetButtonsDown(&pad);
     if (pressed & HidNpadButton_Plus) {
       break;
+    }
+    if (pressed & HidNpadButton_X) {
+      send_outbox_file();
+      draw_status();
     }
 
     if (server >= 0) {

@@ -387,16 +387,15 @@ std::string certificate_fingerprint_from_pem(const std::string& pem) {
 }
 
 TlsIdentity load_or_create_tls_identity(const std::filesystem::path& certificate_path, const std::filesystem::path& private_key_path) {
+#if LOCALSEND_PLATFORM_PSV
+  (void)certificate_path;
+  (void)private_key_path;
+  return identity_from_pem(kPsvDevCertificatePem, kPsvDevPrivateKeyPem);
+#else
   if (std::filesystem::exists(certificate_path) && std::filesystem::exists(private_key_path)) {
     return identity_from_pem(read_text_file(certificate_path), read_text_file(private_key_path));
   }
 
-#if LOCALSEND_PLATFORM_PSV
-  TlsIdentity identity = identity_from_pem(kPsvDevCertificatePem, kPsvDevPrivateKeyPem);
-  write_text_file(certificate_path, identity.certificate_pem);
-  write_text_file(private_key_path, identity.private_key_pem);
-  return identity;
-#else
   TlsIdentity identity = generate_tls_identity();
   write_text_file(certificate_path, identity.certificate_pem);
   write_text_file(private_key_path, identity.private_key_pem);

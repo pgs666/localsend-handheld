@@ -13,5 +13,10 @@ inline constexpr const char* kRoutePrepareUpload = "/api/localsend/v2/prepare-up
 inline constexpr const char* kRouteUpload = "/api/localsend/v2/upload";
 inline constexpr const char* kRouteCancel = "/api/localsend/v2/cancel";
 
-} // namespace localsend
+inline constexpr const char* kRouteInfoV1 = "/api/localsend/v1/info";
+inline constexpr const char* kRouteRegisterV1 = "/api/localsend/v1/register";
+inline constexpr const char* kRoutePrepareUploadV1 = "/api/localsend/v1/send-request";
+inline constexpr const char* kRouteUploadV1 = "/api/localsend/v1/send";
+inline constexpr const char* kRouteCancelV1 = "/api/localsend/v1/cancel";
 
+} // namespace localsend

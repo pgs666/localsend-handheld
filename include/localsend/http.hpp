@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace localsend {
 
@@ -76,8 +77,8 @@ private:
   HttpResponse route(const HttpRequest& request);
 
   HttpResponse handle_info() const;
-  HttpResponse handle_prepare_upload(const HttpRequest& request);
-  HttpResponse handle_upload(int client_fd, const HttpRequest& request, const std::string& initial_body);
+  HttpResponse handle_prepare_upload(const HttpRequest& request, bool v2);
+  HttpResponse handle_upload(int client_fd, const HttpRequest& request, const std::string& initial_body, bool v2);
   HttpResponse handle_cancel(const HttpRequest& request);
 
   InfoRegisterDto self_;
@@ -91,5 +92,6 @@ private:
 };
 
 bool send_single_file_http(const Device& target, const std::filesystem::path& file_path, const InfoRegisterDto& self);
+bool send_files_http(const Device& target, const std::vector<std::filesystem::path>& file_paths, const InfoRegisterDto& self);
 
 } // namespace localsend

@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -15,7 +16,7 @@ void print_usage(const char* argv0) {
             << "  " << argv0 << " info [alias]\n"
             << "  " << argv0 << " config [path]\n"
             << "  " << argv0 << " serve [inbox] [port] [alias]\n"
-            << "  " << argv0 << " send <ip> <port> <file> [alias]\n"
+            << "  " << argv0 << " send <ip> <port> <file...> [--alias name]\n"
             << "  " << argv0 << " discover [milliseconds]\n";
 }
 
@@ -87,13 +88,26 @@ int command_send(int argc, char** argv) {
   target.port = std::stoi(argv[3]);
   target.https = false;
 
-  const std::filesystem::path file = argv[4];
-  const std::string alias = argc >= 6 ? argv[5] : "LocalSend Handheld Desktop";
-  if (!localsend::send_single_file_http(target, file, make_self(alias))) {
+  std::string alias = "LocalSend Handheld Desktop";
+  std::vector<std::filesystem::path> files;
+  for (int i = 4; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--alias" && i + 1 < argc) {
+      alias = argv[++i];
+    } else {
+      files.emplace_back(arg);
+    }
+  }
+  if (files.empty()) {
+    print_usage(argv[0]);
+    return 1;
+  }
+
+  if (!localsend::send_files_http(target, files, make_self(alias))) {
     std::cerr << "send failed\n";
     return 1;
   }
-  std::cout << "sent " << file << " to " << target.ip << ':' << target.port << '\n';
+  std::cout << "sent " << files.size() << " file(s) to " << target.ip << ':' << target.port << '\n';
   return 0;
 }
 

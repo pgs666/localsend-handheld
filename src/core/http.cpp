@@ -185,6 +185,10 @@ bool transfer_encoding_chunked(const std::map<std::string, std::string>& headers
   return false;
 }
 
+bool route_is(const HttpRequest& request, const char* path) {
+  return request.path == path;
+}
+
 bool read_body(int fd, std::string& buffer, std::size_t header_end, std::size_t length, std::string& body) {
   body = buffer.substr(header_end);
   while (body.size() < length) {
@@ -578,8 +582,8 @@ void LocalSendServer::handle_client(int client_fd) {
   HttpResponse response;
   if (!parse_request_headers(client_fd, request, initial_body)) {
     response = text_response(400, "bad request");
-  } else if (request.method == "POST" && request.path == kRouteUpload) {
-    response = handle_upload(client_fd, request, initial_body);
+  } else if (request.method == "POST" && (route_is(request, kRouteUpload) || route_is(request, kRouteUploadV1))) {
+    response = handle_upload(client_fd, request, initial_body, route_is(request, kRouteUpload));
   } else if (!read_remaining_body(client_fd, initial_body, request.content_length, request.body)) {
     response = text_response(400, "bad request body");
   } else {
@@ -598,19 +602,19 @@ void LocalSendServer::handle_client(int client_fd) {
 }
 
 HttpResponse LocalSendServer::route(const HttpRequest& request) {
-  if (request.method == "GET" && request.path == kRouteInfo) {
+  if (request.method == "GET" && (route_is(request, kRouteInfo) || route_is(request, kRouteInfoV1))) {
     return handle_info();
   }
-  if (request.method == "POST" && request.path == kRouteRegister) {
+  if (request.method == "POST" && (route_is(request, kRouteRegister) || route_is(request, kRouteRegisterV1))) {
     return handle_info();
   }
-  if (request.method == "POST" && request.path == kRoutePrepareUpload) {
-    return handle_prepare_upload(request);
+  if (request.method == "POST" && (route_is(request, kRoutePrepareUpload) || route_is(request, kRoutePrepareUploadV1))) {
+    return handle_prepare_upload(request, route_is(request, kRoutePrepareUpload));
   }
-  if (request.method == "POST" && request.path == kRouteUpload) {
+  if (request.method == "POST" && (route_is(request, kRouteUpload) || route_is(request, kRouteUploadV1))) {
     return text_response(400, "upload route requires streaming handler");
   }
-  if (request.method == "POST" && request.path == kRouteCancel) {
+  if (request.method == "POST" && (route_is(request, kRouteCancel) || route_is(request, kRouteCancelV1))) {
     return handle_cancel(request);
   }
   return text_response(404, "not found");
@@ -620,7 +624,7 @@ HttpResponse LocalSendServer::handle_info() const {
   return json_response(200, to_json(static_cast<const InfoDto&>(self_)));
 }
 
-HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request) {
+HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request, bool v2) {
   PrepareUploadRequestDto dto;
   try {
     dto = prepare_upload_request_from_json(Json::parse(request.body));
@@ -647,14 +651,22 @@ HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request) 
     sessions_.emplace(session.session_id, std::move(session));
   }
 
-  return json_response(200, to_json(response));
+  if (v2) {
+    return json_response(200, to_json(response));
+  }
+
+  Json files = Json::object();
+  for (const auto& entry : response.files) {
+    files[entry.first] = entry.second;
+  }
+  return json_response(200, files);
 }
 
-HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& request, const std::string& initial_body) {
+HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& request, const std::string& initial_body, bool v2) {
   const auto session_it = request.query.find("sessionId");
   const auto file_it = request.query.find("fileId");
   const auto token_it = request.query.find("token");
-  if (session_it == request.query.end() || file_it == request.query.end() || token_it == request.query.end()) {
+  if ((v2 && session_it == request.query.end()) || file_it == request.query.end() || token_it == request.query.end()) {
     return text_response(400, "missing upload query");
   }
 
@@ -662,7 +674,10 @@ HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& re
   std::uint64_t expected_size = 0;
   {
     std::lock_guard<std::mutex> lock(sessions_mutex_);
-    auto session = sessions_.find(session_it->second);
+    auto session = v2 ? sessions_.find(session_it->second) : sessions_.end();
+    if (!v2 && sessions_.size() == 1) {
+      session = sessions_.begin();
+    }
     if (session == sessions_.end() || session->second.cancelled) {
       return text_response(404, "session not found");
     }
@@ -748,26 +763,35 @@ HttpResponse LocalSendServer::handle_cancel(const HttpRequest& request) {
   return text_response(200, "ok");
 }
 
-bool send_single_file_http(const Device& target, const std::filesystem::path& file_path, const InfoRegisterDto& self) {
+bool send_files_http(const Device& target, const std::vector<std::filesystem::path>& file_paths, const InfoRegisterDto& self) {
   if (target.https) {
     return false;
   }
-
-  std::ifstream in(file_path, std::ios::binary);
-  if (!in) {
+  if (file_paths.empty()) {
     return false;
   }
-  const auto size = std::filesystem::file_size(file_path);
 
-  FileDto file;
-  file.id = "0";
-  file.file_name = file_path.filename().string();
-  file.size = static_cast<std::uint64_t>(size);
-  file.file_type = mime_from_filename(file.file_name);
+  std::vector<FileDto> files;
+  files.reserve(file_paths.size());
+  for (std::size_t i = 0; i < file_paths.size(); ++i) {
+    std::ifstream probe(file_paths[i], std::ios::binary);
+    if (!probe) {
+      return false;
+    }
+
+    FileDto file;
+    file.id = std::to_string(i);
+    file.file_name = file_paths[i].filename().string();
+    file.size = static_cast<std::uint64_t>(std::filesystem::file_size(file_paths[i]));
+    file.file_type = mime_from_filename(file.file_name);
+    files.push_back(std::move(file));
+  }
 
   PrepareUploadRequestDto request;
   request.info = self;
-  request.files.emplace(file.id, file);
+  for (const auto& file : files) {
+    request.files.emplace(file.id, file);
+  }
 
   const HttpResult prepared = http_post(target.ip, target.port, kRoutePrepareUpload, to_json(request).dump());
   if (prepared.status != 200) {
@@ -781,18 +805,36 @@ bool send_single_file_http(const Device& target, const std::filesystem::path& fi
     return false;
   }
 
-  const auto token = response.files.find(file.id);
-  if (token == response.files.end()) {
-    return false;
+  bool all_uploaded = true;
+  for (std::size_t i = 0; i < files.size(); ++i) {
+    const FileDto& file = files[i];
+    const auto token = response.files.find(file.id);
+    if (token == response.files.end()) {
+      all_uploaded = false;
+      continue;
+    }
+
+    std::ifstream in(file_paths[i], std::ios::binary);
+    if (!in) {
+      return false;
+    }
+
+    const std::string path = with_query(kRouteUpload, {
+        {"sessionId", response.session_id},
+        {"fileId", file.id},
+        {"token", token->second},
+    });
+    const HttpResult uploaded = post_file_raw(target.ip, target.port, path, in, file.size, file.file_type);
+    if (uploaded.status != 200) {
+      all_uploaded = false;
+    }
   }
 
-  const std::string path = with_query(kRouteUpload, {
-      {"sessionId", response.session_id},
-      {"fileId", file.id},
-      {"token", token->second},
-  });
-  const HttpResult uploaded = post_file_raw(target.ip, target.port, path, in, size, file.file_type);
-  return uploaded.status == 200;
+  return all_uploaded;
+}
+
+bool send_single_file_http(const Device& target, const std::filesystem::path& file_path, const InfoRegisterDto& self) {
+  return send_files_http(target, {file_path}, self);
 }
 
 } // namespace localsend

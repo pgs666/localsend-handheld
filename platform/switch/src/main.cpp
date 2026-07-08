@@ -582,7 +582,7 @@ void handle_debug_log(int fd) {
   send_response(fd, 200, "text/plain", body);
 }
 
-void handle_prepare_upload(int fd, const std::string& body) {
+void handle_prepare_upload(int fd, const std::string& body, bool v2) {
   append_log("prepare-upload body bytes=" + std::to_string(body.size()));
   append_log(body.substr(0, 4096));
   g_session.active = true;
@@ -647,7 +647,7 @@ void handle_prepare_upload(int fd, const std::string& body) {
     g_session.file_count = 1;
   }
 
-  std::string response = "{\"sessionId\":\"" + g_session.session_id + "\",\"files\":{";
+  std::string response = v2 ? "{\"sessionId\":\"" + g_session.session_id + "\",\"files\":{" : "{";
   for (int i = 0; i < g_session.file_count; ++i) {
     if (i > 0) {
       response += ",";
@@ -664,13 +664,13 @@ void handle_prepare_upload(int fd, const std::string& body) {
                " fileId=" + g_session.files[i].file_id + " name=" + g_session.files[i].file_name +
                " size=" + std::to_string(g_session.files[i].size) + " token=" + g_session.files[i].token);
   }
-  response += "}}";
+  response += v2 ? "}}" : "}";
   append_log("prepare response=" + response);
   std::snprintf(g_status, sizeof(g_status), "Prepared: %d file(s)", g_session.file_count);
   send_response(fd, 200, "application/json", response);
 }
 
-void handle_upload(int fd, const std::string& target, const std::string& initial_body, size_t length, bool chunked) {
+void handle_upload(int fd, const std::string& target, const std::string& initial_body, size_t length, bool chunked, bool v2) {
   PendingFile* selected = nullptr;
   const std::string file_id = query_value(target, "fileId");
   const std::string token = query_value(target, "token");
@@ -683,7 +683,7 @@ void handle_upload(int fd, const std::string& target, const std::string& initial
     }
   }
 
-  if (!g_session.active || query_value(target, "sessionId") != g_session.session_id || selected == nullptr) {
+  if (!g_session.active || (v2 && query_value(target, "sessionId") != g_session.session_id) || selected == nullptr) {
     append_log("upload rejected active=" + std::to_string(g_session.active) + " sessionId=" + query_value(target, "sessionId"));
     send_response(fd, 403, "text/plain", "invalid session");
     return;
@@ -764,17 +764,17 @@ void handle_client(int fd) {
   const bool chunked = transfer_encoding_chunked(request);
   append_log("request target=" + target + " length=" + std::to_string(length) + " chunked=" + std::to_string(chunked));
 
-  if (first_method_is(request, "GET") && starts_with(target, "/api/localsend/v2/info")) {
+  if (first_method_is(request, "GET") && (starts_with(target, "/api/localsend/v2/info") || starts_with(target, "/api/localsend/v1/info"))) {
     handle_info(fd);
   } else if (first_method_is(request, "GET") && starts_with(target, "/debug/log")) {
     handle_debug_log(fd);
-  } else if (first_method_is(request, "POST") && starts_with(target, "/api/localsend/v2/register")) {
+  } else if (first_method_is(request, "POST") && (starts_with(target, "/api/localsend/v2/register") || starts_with(target, "/api/localsend/v1/register"))) {
     handle_info(fd);
-  } else if (first_method_is(request, "POST") && starts_with(target, "/api/localsend/v2/prepare-upload")) {
-    handle_prepare_upload(fd, read_body_string(fd, initial_body, length));
-  } else if (first_method_is(request, "POST") && starts_with(target, "/api/localsend/v2/upload")) {
-    handle_upload(fd, target, initial_body, length, chunked);
-  } else if (first_method_is(request, "POST") && starts_with(target, "/api/localsend/v2/cancel")) {
+  } else if (first_method_is(request, "POST") && (starts_with(target, "/api/localsend/v2/prepare-upload") || starts_with(target, "/api/localsend/v1/send-request"))) {
+    handle_prepare_upload(fd, read_body_string(fd, initial_body, length), starts_with(target, "/api/localsend/v2/prepare-upload"));
+  } else if (first_method_is(request, "POST") && (starts_with(target, "/api/localsend/v2/upload") || starts_with(target, "/api/localsend/v1/send"))) {
+    handle_upload(fd, target, initial_body, length, chunked, starts_with(target, "/api/localsend/v2/upload"));
+  } else if (first_method_is(request, "POST") && (starts_with(target, "/api/localsend/v2/cancel") || starts_with(target, "/api/localsend/v1/cancel"))) {
     handle_cancel(fd);
   } else {
     send_response(fd, 404, "text/plain", "not found");

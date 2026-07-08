@@ -90,6 +90,8 @@ void test_multicast_dto() {
 void test_route_constants() {
   require(std::string(localsend::kRouteInfo) == "/api/localsend/v2/info", "info route mismatch");
   require(std::string(localsend::kRoutePrepareUpload) == "/api/localsend/v2/prepare-upload", "prepare route mismatch");
+  require(std::string(localsend::kRouteInfoV1) == "/api/localsend/v1/info", "v1 info route mismatch");
+  require(std::string(localsend::kRoutePrepareUploadV1) == "/api/localsend/v1/send-request", "v1 prepare route mismatch");
   require(std::string(localsend::kDefaultMulticastGroup) == "224.0.0.167", "multicast group mismatch");
 }
 
@@ -195,6 +197,99 @@ void test_http_server_routes_and_upload() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_send_multiple_files() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-multi-tests";
+  const auto source_dir = dir / "source";
+  const auto inbox_dir = dir / "inbox";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(source_dir);
+  std::filesystem::create_directories(inbox_dir);
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Receiver";
+  self.protocol = localsend::ProtocolType::Http;
+
+  localsend::LocalSendServer server(self, inbox_dir);
+  require(server.start(0), "server failed to start for multi send test");
+
+  const auto first = source_dir / "first.txt";
+  const auto second = source_dir / "second.bin";
+  {
+    std::ofstream out(first, std::ios::binary);
+    out << "first file";
+  }
+  {
+    std::ofstream out(second, std::ios::binary);
+    for (int i = 0; i < 70000; ++i) {
+      out.put(static_cast<char>(i % 251));
+    }
+  }
+
+  localsend::Device target;
+  target.ip = "127.0.0.1";
+  target.port = server.port();
+  target.https = false;
+
+  localsend::InfoRegisterDto sender;
+  sender.alias = "Sender";
+  sender.port = 12345;
+  sender.protocol = localsend::ProtocolType::Http;
+
+  require(localsend::send_files_http(target, {first, second}, sender), "multi file HTTP send failed");
+  require(std::filesystem::exists(inbox_dir / "first.txt"), "first uploaded file missing");
+  require(std::filesystem::exists(inbox_dir / "second.bin"), "second uploaded file missing");
+  require(std::filesystem::file_size(inbox_dir / "first.txt") == std::filesystem::file_size(first), "first uploaded size mismatch");
+  require(std::filesystem::file_size(inbox_dir / "second.bin") == std::filesystem::file_size(second), "second uploaded size mismatch");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
+void test_http_v1_legacy_routes() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-v1-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Receiver";
+  self.port = 0;
+  self.protocol = localsend::ProtocolType::Http;
+
+  localsend::LocalSendServer server(self, dir);
+  require(server.start(0), "server failed to start for v1 test");
+
+  const auto info = localsend::http_get("127.0.0.1", server.port(), std::string(localsend::kRouteInfoV1) + "?fingerprint=iphone");
+  require(info.status == 200, "v1 info route failed");
+  require(localsend::info_from_json(localsend::Json::parse(info.body)).version == localsend::kProtocolVersion, "v1 info should advertise current version");
+
+  localsend::PrepareUploadRequestDto request;
+  request.info.alias = "Legacy Sender";
+  request.info.port = 12345;
+  request.info.protocol = localsend::ProtocolType::Http;
+
+  localsend::FileDto file;
+  file.id = "legacy-file";
+  file.file_name = "legacy.txt";
+  file.size = 11;
+  file.file_type = "text/plain";
+  request.files.emplace(file.id, file);
+
+  const auto prepare = localsend::http_post("127.0.0.1", server.port(), localsend::kRoutePrepareUploadV1, localsend::to_json(request).dump());
+  require(prepare.status == 200, "v1 send-request failed");
+  const auto token_map = localsend::Json::parse(prepare.body);
+  require(token_map.contains(file.id), "v1 send-request must return raw token map");
+  require(!token_map.contains("sessionId"), "v1 send-request must not return v2 wrapper");
+
+  const std::string body = "hello world";
+  const std::string upload_path = std::string(localsend::kRouteUploadV1) + "?fileId=" + file.id + "&token=" + token_map.at(file.id).as_string();
+  const auto upload = localsend::http_post("127.0.0.1", server.port(), upload_path, body, file.file_type);
+  require(upload.status == 200, "v1 send upload failed");
+  require(std::filesystem::exists(dir / "legacy.txt"), "v1 uploaded file missing");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
 void test_http_prepare_uses_file_id() {
   const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-id-tests";
   std::filesystem::remove_all(dir);
@@ -294,6 +389,8 @@ int main() {
     test_safe_filename();
     test_unique_destination();
     test_http_server_routes_and_upload();
+    test_http_send_multiple_files();
+    test_http_v1_legacy_routes();
     test_http_prepare_uses_file_id();
     test_http_server_chunked_upload();
   } catch (const std::exception& e) {

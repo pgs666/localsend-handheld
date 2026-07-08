@@ -35,6 +35,7 @@ void log_line(const std::string& line) {
 
 struct KeyLabels {
   std::string send;
+  std::string send_all;
   std::string cancel;
   std::string next_peer;
   std::string next_file;
@@ -45,13 +46,13 @@ struct KeyLabels {
 KeyLabels key_labels_for_platform(PlatformKind platform) {
   switch (platform) {
   case PlatformKind::Switch:
-    return {"X", "B", "Y", "R", "L", "Minus"};
+    return {"X", "Plus", "B", "Y", "R", "L", "Minus"};
   case PlatformKind::Psv:
-    return {"Square", "Circle", "Triangle", "R", "L", "Select"};
+    return {"Square", "Start", "Circle", "Triangle", "R", "L", "Select"};
   case PlatformKind::Desktop:
-    return {"X", "B", "Y", "RB", "LB", "Back"};
+    return {"X", "Start", "B", "Y", "RB", "LB", "Back"};
   }
-  return {"X", "B", "Y", "RB", "LB", "Back"};
+  return {"X", "Start", "B", "Y", "RB", "LB", "Back"};
 }
 
 std::string initial_send_prompt(const KeyLabels& keys) {
@@ -212,7 +213,7 @@ brls::View* make_panel(const HandheldAppConfig& app_config,
 
   const KeyLabels keys = key_labels_for_platform(app_config.platform);
   const std::string hint_text =
-      keys.send + " send  " + keys.next_peer + " peer  " + keys.next_file + " file  " +
+      keys.send + " send  " + keys.send_all + " all  " + keys.next_peer + " peer  " + keys.next_file + " file  " +
       keys.save_peer + " save  " + keys.remove_peer + " remove  " + keys.cancel + " cancel";
   auto* hint = make_label(hint_text, 20, brls::HorizontalAlign::CENTER, 780);
   hint->setMargins(24, 0, 0, 0);
@@ -459,6 +460,43 @@ int run_handheld_app(const HandheldAppConfig& config) {
       const std::string error = service->last_send_error();
       state.send_status = error.empty() ? "Send start failed" : "Send failed: " + error;
       log_line("Send action failed to start: " + state.send_status);
+    }
+    refresh_send_status(state.send_status, refs);
+    return true;
+  });
+  frame->registerAction(action_label("Send all", keys.send_all), brls::BUTTON_START, [&](brls::View*) {
+    if (!service || !state.server_started) {
+      state.send_status = "Receive server not ready";
+      refresh_send_status(state.send_status, refs);
+      log_line("Send all rejected: service not ready");
+      return true;
+    }
+
+    const AppSnapshot snapshot = service->snapshot();
+    const auto selected = selected_online_device(snapshot.devices, state.selected_device_index);
+    if (!selected) {
+      state.send_status = "No online peer selected";
+      refresh_send_status(state.send_status, refs);
+      log_line("Send all rejected: no online peer");
+      return true;
+    }
+
+    const std::vector<std::filesystem::path> files = selectable_files(list_directory(service_config.outbox_path));
+    if (files.empty()) {
+      state.send_status = "Outbox empty";
+      refresh_send_status(state.send_status, refs);
+      log_line("Send all rejected: outbox empty");
+      return true;
+    }
+
+    if (service->start_send_to_device(selected->key, files)) {
+      const std::string peer = selected->device.alias.empty() ? selected->device.ip : selected->device.alias;
+      state.send_status = "Sending " + std::to_string(files.size()) + " files to " + peer;
+      log_line("Send all started count=" + std::to_string(files.size()) + " target=" + format_send_target_log(*selected));
+    } else {
+      const std::string error = service->last_send_error();
+      state.send_status = error.empty() ? "Send all failed" : "Send failed: " + error;
+      log_line("Send all failed to start: " + state.send_status);
     }
     refresh_send_status(state.send_status, refs);
     return true;

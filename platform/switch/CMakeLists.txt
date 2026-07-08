@@ -42,6 +42,14 @@ endif()
 add_subdirectory(${BOREALIS_LIBRARY}
   ${CMAKE_CURRENT_BINARY_DIR}/borealis)
 
+target_include_directories(borealis PUBLIC
+  ${DEVKITPRO}/portlibs/switch/include
+)
+
+target_link_directories(borealis PUBLIC
+  ${DEVKITPRO}/portlibs/switch/lib
+)
+
 add_library(localsend-core-switch-ui STATIC ${LOCALSEND_CORE_SOURCES})
 
 set_target_properties(localsend-core-switch-ui PROPERTIES

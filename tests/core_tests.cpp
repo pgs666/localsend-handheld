@@ -563,6 +563,7 @@ BdqGLvSTqbINqoRmcdIP1Qo=
     require(client_fd >= 0, "tls accept failed");
     auto tls = localsend::TlsConnection::server(client_fd, {certificate, private_key});
     require(tls.handshake(), "server TLS handshake failed");
+    require(tls.peer_fingerprint() == expected_fingerprint, "server TLS client fingerprint failed");
     std::uint8_t buffer[16] = {};
     const int read = tls.read(buffer, sizeof(buffer));
     require(read == 4 && std::string(reinterpret_cast<char*>(buffer), 4) == "ping", "server TLS read failed");
@@ -579,7 +580,8 @@ BdqGLvSTqbINqoRmcdIP1Qo=
   target.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   target.sin_port = htons(static_cast<uint16_t>(port));
   require(::connect(fd, reinterpret_cast<sockaddr*>(&target), sizeof(target)) == 0, "tls client connect failed");
-  auto tls = localsend::TlsConnection::client(fd);
+  const localsend::TlsCredentials client_credentials{certificate, private_key};
+  auto tls = localsend::TlsConnection::client(fd, &client_credentials);
   require(tls.handshake(), "client TLS handshake failed");
   require(tls.peer_fingerprint() == expected_fingerprint, "client peer fingerprint failed");
   const std::string ping = "ping";
@@ -1235,6 +1237,75 @@ void test_https_server_routes_and_upload() {
   localsend::Device bad_target = target;
   bad_target.fingerprint = std::string(64, '0');
   require(!localsend::send_single_file_http(bad_target, source, sender), "HTTPS send should reject wrong fingerprint");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
+void test_https_register_uses_client_certificate_identity() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-https-register-tests";
+  const auto client_cert_path = dir / "client-cert.pem";
+  const auto client_key_path = dir / "client-key.pem";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  const std::string server_fingerprint = localsend::certificate_fingerprint_from_pem(test_tls_certificate());
+  const localsend::TlsIdentity client_identity = localsend::load_or_create_tls_identity(client_cert_path, client_key_path);
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Secure Receiver";
+  self.port = 0;
+  self.protocol = localsend::ProtocolType::Https;
+  self.fingerprint = server_fingerprint;
+
+  localsend::Device registered;
+  bool callback_called = false;
+  localsend::LocalSendServer server(self, dir, {test_tls_certificate(), test_tls_private_key()});
+  server.set_register_callback([&](localsend::Device device) {
+    registered = std::move(device);
+    callback_called = true;
+  });
+  require(server.start(0), "HTTPS register identity server failed to start");
+
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(fd >= 0, "HTTPS register identity socket failed");
+  sockaddr_in target{};
+  target.sin_family = AF_INET;
+  target.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  target.sin_port = htons(static_cast<uint16_t>(server.port()));
+  require(::connect(fd, reinterpret_cast<sockaddr*>(&target), sizeof(target)) == 0, "HTTPS register identity connect failed");
+
+  const localsend::TlsCredentials credentials{client_identity.certificate_pem, client_identity.private_key_pem};
+  auto tls = localsend::TlsConnection::client(fd, &credentials);
+  require(tls.handshake(), "HTTPS register identity TLS handshake failed");
+
+  localsend::InfoRegisterDto sender;
+  sender.alias = "Certificate Sender";
+  sender.version = localsend::kProtocolVersion;
+  sender.port = 12345;
+  sender.protocol = localsend::ProtocolType::Https;
+  sender.fingerprint = "spoofed-json-fingerprint";
+  const std::string body = localsend::to_json(sender).dump();
+
+  std::ostringstream request;
+  request << "POST " << localsend::kRouteRegister << " HTTP/1.1\r\n"
+          << "Host: 127.0.0.1:" << server.port() << "\r\n"
+          << "Connection: close\r\n"
+          << "Content-Type: application/json\r\n"
+          << "Content-Length: " << body.size() << "\r\n\r\n"
+          << body;
+  const std::string request_text = request.str();
+  require(tls.write_all(reinterpret_cast<const std::uint8_t*>(request_text.data()), request_text.size()),
+          "HTTPS register identity request write failed");
+
+  std::uint8_t buffer[512] = {};
+  const int read = tls.read(buffer, sizeof(buffer));
+  require(read > 0, "HTTPS register identity response read failed");
+  tls.close_notify();
+
+  require(callback_called, "HTTPS register callback not called");
+  require(registered.fingerprint == client_identity.fingerprint, "HTTPS register should use client certificate fingerprint");
+  require(registered.alias == "Certificate Sender", "HTTPS register alias failed");
 
   server.stop();
   std::filesystem::remove_all(dir);
@@ -1942,6 +2013,7 @@ int main() {
     test_http_send_downgrades_misadvertised_https_target();
     test_http_info_and_register_discovery_semantics();
     test_https_server_routes_and_upload();
+    test_https_register_uses_client_certificate_identity();
     test_http_send_multiple_files();
     test_http_transfer_store_updates();
     test_http_v1_legacy_routes();

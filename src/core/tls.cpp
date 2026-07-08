@@ -218,6 +218,7 @@ TlsConnection TlsConnection::server(int fd, const TlsCredentials& credentials) {
   if (mbedtls_ssl_config_defaults(&impl->config, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) != 0) {
     throw std::runtime_error("mbedTLS server config failed");
   }
+  mbedtls_ssl_conf_authmode(&impl->config, MBEDTLS_SSL_VERIFY_OPTIONAL);
   mbedtls_ssl_conf_rng(&impl->config, mbedtls_ctr_drbg_random, &impl->ctr_drbg);
   if (mbedtls_ssl_conf_own_cert(&impl->config, &impl->certificate, &impl->private_key) != 0) {
     throw std::runtime_error("mbedTLS own certificate config failed");

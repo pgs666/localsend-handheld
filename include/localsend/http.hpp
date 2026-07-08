@@ -108,14 +108,14 @@ private:
 
   void accept_loop();
   void handle_client(int client_fd, std::string remote_ip);
-  HttpResponse route(const HttpRequest& request, const std::string& remote_ip);
+  HttpResponse route(const HttpRequest& request, const std::string& remote_ip, const std::string& peer_fingerprint);
 #if LOCALSEND_PLATFORM_PSV
   static void* accept_thread_entry(void* arg);
 #endif
 
   HttpResponse handle_info(const HttpRequest& request) const;
-  HttpResponse handle_register(const HttpRequest& request, const std::string& remote_ip);
-  HttpResponse handle_prepare_upload(const HttpRequest& request, bool v2, const std::string& remote_ip);
+  HttpResponse handle_register(const HttpRequest& request, const std::string& remote_ip, const std::string& peer_fingerprint);
+  HttpResponse handle_prepare_upload(const HttpRequest& request, bool v2, const std::string& remote_ip, const std::string& peer_fingerprint);
   HttpResponse handle_upload(HttpStream& stream, const HttpRequest& request, const std::string& initial_body, bool v2);
   HttpResponse handle_cancel(const HttpRequest& request);
 

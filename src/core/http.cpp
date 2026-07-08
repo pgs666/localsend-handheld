@@ -987,6 +987,7 @@ void LocalSendServer::set_register_callback(std::function<void(Device)> callback
 
 void LocalSendServer::handle_client(int client_fd, std::string remote_ip) {
   std::unique_ptr<HttpStream> stream;
+  std::string peer_fingerprint;
   if (tls_credentials_) {
 #if LOCALSEND_HAS_MBEDTLS
     try {
@@ -995,6 +996,7 @@ void LocalSendServer::handle_client(int client_fd, std::string remote_ip) {
         close_fd(client_fd);
         return;
       }
+      peer_fingerprint = tls.peer_fingerprint();
       stream = std::make_unique<TlsStream>(std::move(tls));
     } catch (const std::exception&) {
       close_fd(client_fd);
@@ -1018,7 +1020,7 @@ void LocalSendServer::handle_client(int client_fd, std::string remote_ip) {
   } else if (!read_remaining_body(*stream, initial_body, request.content_length, request.body)) {
     response = text_response(400, "bad request body");
   } else {
-    response = route(request, remote_ip);
+    response = route(request, remote_ip, peer_fingerprint);
   }
 
   std::ostringstream out;
@@ -1032,15 +1034,15 @@ void LocalSendServer::handle_client(int client_fd, std::string remote_ip) {
   stream->close_notify();
 }
 
-HttpResponse LocalSendServer::route(const HttpRequest& request, const std::string& remote_ip) {
+HttpResponse LocalSendServer::route(const HttpRequest& request, const std::string& remote_ip, const std::string& peer_fingerprint) {
   if (request.method == "GET" && (route_is(request, kRouteInfo) || route_is(request, kRouteInfoV1))) {
     return handle_info(request);
   }
   if (request.method == "POST" && (route_is(request, kRouteRegister) || route_is(request, kRouteRegisterV1))) {
-    return handle_register(request, remote_ip);
+    return handle_register(request, remote_ip, peer_fingerprint);
   }
   if (request.method == "POST" && (route_is(request, kRoutePrepareUpload) || route_is(request, kRoutePrepareUploadV1))) {
-    return handle_prepare_upload(request, route_is(request, kRoutePrepareUpload), remote_ip);
+    return handle_prepare_upload(request, route_is(request, kRoutePrepareUpload), remote_ip, peer_fingerprint);
   }
   if (request.method == "POST" && (route_is(request, kRouteUpload) || route_is(request, kRouteUploadV1))) {
     return text_response(400, "upload route requires streaming handler");
@@ -1059,12 +1061,15 @@ HttpResponse LocalSendServer::handle_info(const HttpRequest& request) const {
   return json_response(200, to_json(self_));
 }
 
-HttpResponse LocalSendServer::handle_register(const HttpRequest& request, const std::string& remote_ip) {
+HttpResponse LocalSendServer::handle_register(const HttpRequest& request, const std::string& remote_ip, const std::string& peer_fingerprint) {
   InfoRegisterDto dto;
   try {
     dto = info_register_from_json(Json::parse(request.body));
   } catch (const std::exception&) {
     return text_response(400, "Request body malformed");
+  }
+  if (!peer_fingerprint.empty()) {
+    dto.fingerprint = peer_fingerprint;
   }
 
   if (!self_.fingerprint.empty() && dto.fingerprint == self_.fingerprint) {
@@ -1083,12 +1088,18 @@ HttpResponse LocalSendServer::handle_register(const HttpRequest& request, const 
   return json_response(200, to_json(static_cast<const InfoDto&>(self_)));
 }
 
-HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request, bool v2, const std::string& remote_ip) {
+HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request,
+                                                    bool v2,
+                                                    const std::string& remote_ip,
+                                                    const std::string& peer_fingerprint) {
   PrepareUploadRequestDto dto;
   try {
     dto = prepare_upload_request_from_json(Json::parse(request.body));
   } catch (const std::exception& e) {
     return text_response(400, e.what());
+  }
+  if (!peer_fingerprint.empty()) {
+    dto.info.fingerprint = peer_fingerprint;
   }
 
   Session session;

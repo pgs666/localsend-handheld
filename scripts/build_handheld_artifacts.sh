@@ -8,7 +8,8 @@ USE_CONTAINER="${USE_CONTAINER:-0}"
 CONTAINER_ENGINE="${CONTAINER_ENGINE:-}"
 SWITCH_IMAGE="${SWITCH_IMAGE:-devkitpro/devkita64:latest}"
 PSV_IMAGE="${PSV_IMAGE:-vitasdk/vitasdk:latest}"
-SWITCH_BUILD_JOBS="${SWITCH_BUILD_JOBS:-4}"
+HOST_BUILD_JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 4)"
+SWITCH_BUILD_JOBS="${SWITCH_BUILD_JOBS:-${HOST_BUILD_JOBS}}"
 
 usage() {
   cat <<EOF
@@ -21,7 +22,7 @@ Environment:
   CONTAINER_ENGINE  docker or podman. Auto-detected when USE_CONTAINER=1.
   SWITCH_IMAGE      Default: ${SWITCH_IMAGE}
   PSV_IMAGE         Default: ${PSV_IMAGE}
-  SWITCH_BUILD_JOBS Parallel jobs for Switch builds. Default: ${SWITCH_BUILD_JOBS}
+  SWITCH_BUILD_JOBS Parallel jobs for Switch builds. Default: host CPU count (${SWITCH_BUILD_JOBS})
 
 Examples:
   $0 desktop

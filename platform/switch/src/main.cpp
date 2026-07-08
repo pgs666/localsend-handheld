@@ -396,8 +396,14 @@ bool read_headers(int fd, std::string& request, std::string& initial_body) {
 }
 
 size_t content_length(const std::string& headers) {
-  const std::string marker = "Content-Length:";
-  size_t pos = headers.find(marker);
+  const std::string marker = "content-length:";
+  std::string lower = headers;
+  for (char& c : lower) {
+    if (c >= 'A' && c <= 'Z') {
+      c = static_cast<char>(c - 'A' + 'a');
+    }
+  }
+  size_t pos = lower.find(marker);
   if (pos == std::string::npos) {
     return 0;
   }

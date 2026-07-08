@@ -337,6 +337,7 @@ void test_device_selection_online_cycle() {
   second.device.ip = "192.168.1.4";
   second.device.port = 53318;
   second.device.https = true;
+  second.source = localsend::DeviceSource::Manual;
   second.online = true;
   devices.push_back(second);
 
@@ -353,7 +354,7 @@ void test_device_selection_online_cycle() {
   require(selected.has_value() && selected->key == "first", "selected online fallback failed");
 
   const std::string formatted = localsend::format_selected_device(devices, next_index);
-  require(formatted == "Second [https] 192.168.1.4:53318", "selected device format failed");
+  require(formatted == "Second [https] 192.168.1.4:53318 (manual)", "selected device format failed");
 
   devices[1].online = false;
   devices[2].online = false;

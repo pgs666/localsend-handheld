@@ -52,6 +52,9 @@ std::string format_selected_device(const std::vector<DeviceEntry>& devices,
   text += " ";
   text += device.https ? "[https] " : "[http] ";
   text += device.ip + ":" + std::to_string(device.port);
+  text += " (";
+  text += to_string(selected->source);
+  text += ")";
   return text;
 }
 

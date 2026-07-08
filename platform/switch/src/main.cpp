@@ -3,6 +3,7 @@
 #include <mbedtls/ctr_drbg.h>
 #include <mbedtls/entropy.h>
 #include <mbedtls/net_sockets.h>
+#include <mbedtls/pk.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/sha256.h>
 #include <mbedtls/x509_crt.h>
@@ -36,6 +37,53 @@ constexpr const char* kDefaultSendTargetIp = "192.168.31.150";
 constexpr const char* kLogPath = "sdmc:/switch/localsend/localsend.log";
 constexpr const char* kMulticastGroup = "224.0.0.167";
 constexpr const char* kBroadcastAddress = "255.255.255.255";
+constexpr const char* kSwitchCertificatePem = R"(-----BEGIN CERTIFICATE-----
+MIIDEzCCAfugAwIBAgIUZAO97Ffzy9Gp+mEPoGoUsNQG6bUwDQYJKoZIhvcNAQEL
+BQAwGTEXMBUGA1UEAwwOTG9jYWxTZW5kIFVzZXIwHhcNMjYwNzA4MDQ0MTMwWhcN
+MzYwNzA1MDQ0MTMwWjAZMRcwFQYDVQQDDA5Mb2NhbFNlbmQgVXNlcjCCASIwDQYJ
+KoZIhvcNAQEBBQADggEPADCCAQoCggEBAM+nwggiabq3hjx+saaPohPLJEUg1Jnx
+4iQ5c0Z7T+zH7AkXrQwoR7RkZNMYaPXx7qTlDQxe0WEDexbtoeKCSDB3u3/4GkOL
+G0YgNeVrxGxN8DuaRleMRxS/Z1VoVPaZadNs0zjp931V5Zm2dFrnocERDjX6iWdZ
+lv9g/SF1EU0hdbprZSKrZSFt9ZCgXIDCnb/1MPle5yW1CuT4y6s9RVzFVJflKPU5
+4t0SIB0sVWFxqKKU207nBUfCldqyn+CUll+OsOFtmgsSrvV8QwOVLylIwKCi2Njj
+/mfIrYyNkDSP0IalQwln3VPdi3dUbgYw5WMed/rd7rYn4QhjRTvi2VECAwEAAaNT
+MFEwHQYDVR0OBBYEFHlwJYjjkjW5OPAsdyTE7w6cCzvcMB8GA1UdIwQYMBaAFHlw
+JYjjkjW5OPAsdyTE7w6cCzvcMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQEL
+BQADggEBADpNbCblsdB9y2nvMEz4wTQambJQvYfTgPBOYgPa5nQxGc1wbFHiBr13
+QRzN/uNATcUNKtmJve3br/sea4Jr10VAX50pdrE+6v4c572UCG2/JrOu+k1fT+55
+iiaf1AR5FwU/MRC9eBESoOXy3JXsM8S9ZILfIqmfV+ca+S53rhhrrYjedRnLJkS0
+IN3Kvbzjy0o8VRMxCGuwB4iAgjiwpvNL5JZSw2rhf+C1KiGhjA+ldD3qonIxekMK
+zPo1oE1CUoAI2vUUEG0egmZ+MB9KFd5f09PZGcYOwmBLjU4/clJAnj4924axxVAd
+7XYy3eHGG4xk8GDyn7+fTaw2fgdBR+c=
+-----END CERTIFICATE-----)";
+constexpr const char* kSwitchPrivateKeyPem = R"(-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDPp8IIImm6t4Y8
+frGmj6ITyyRFINSZ8eIkOXNGe0/sx+wJF60MKEe0ZGTTGGj18e6k5Q0MXtFhA3sW
+7aHigkgwd7t/+BpDixtGIDXla8RsTfA7mkZXjEcUv2dVaFT2mWnTbNM46fd9VeWZ
+tnRa56HBEQ41+olnWZb/YP0hdRFNIXW6a2Uiq2UhbfWQoFyAwp2/9TD5XucltQrk
++MurPUVcxVSX5Sj1OeLdEiAdLFVhcaiilNtO5wVHwpXasp/glJZfjrDhbZoLEq71
+fEMDlS8pSMCgotjY4/5nyK2MjZA0j9CGpUMJZ91T3Yt3VG4GMOVjHnf63e62J+EI
+Y0U74tlRAgMBAAECggEAM9vygjON8hqJRKxjU3SFhqnx6e20Cqo0ztUmK9D5+elH
+0lF+Xw3kMnHsGCf9doawEbA+XPuFENRctjIsfrQIsUoFooTkkj+4VQAQVbZfPKkO
+OORjctPOoKjYdqTyqw9PNYT1Dz6nFz8Pcx702gsFA4Ft6h8il5PxOOAQ930UEA26
+d7xsfSzBREqt94SwdXkmXTrPdb9DQJh5+mve6sUvvVJg2OXtncwW18q4dsh3LONn
+ATLsQXc5tFOPAXu5fihfmT4fBLEyZ5fNigfmxY3paGNKtXY4ChJNay8SVBR34mgW
+akxziAqqSc0uJHLcNpkiLOFM5nvON/fYW0hS2r1tjQKBgQD9r/60ipcYhP4m263n
+bPiYip0lFhkdAy8vc4BTMRCu6qPhy7AhKFwSxM2AkHREtkMp7CDO44dI5sREFAWy
+w7SMjxGIHl+oNaUu6vWGWP7rU9OR7t5HmgUWxdryjy17/rssTLW+FCiuOAWRrS+h
+9aCnLNPJTwNDeXd51oeDuBGhewKBgQDRjFeiGdXKPZ7WKiL2DWXjQs7stMKLRmR4
+R4nvw0uYpK5nkB33napz5ECNceU41G8kUAkiM5r/cJlppNkE66uA1aOl8Q1NRo64
+ViUPgsT0YygFz+Tb0YR9p9VWdhDzVZkxJdK1/ExFQ9y7RwX1OanF5keGthqRZrtQ
+y2XRo9iYowKBgCW212fhvqq/gsUmHYltMtwCp3APA/bDNW2Zfzde8PsAGRMFZA7Z
+4C5OIbr+PrrEWeHOn+YB/2fAHud8DojP/XR0BIg288OfDgqWlZ++dU9o6+gjGdqN
+NDp5eZ5b2Mg5S3w/fzld59pWq8VHePBcAuE3kdi4rWSHl1J+qTDU2ZInAoGAcTXg
+Voycq2H1QYGMV+DPLiP3BX13KaXDPBRyWl3pprM6ImuDNTcyUuB7W6+wBq8GyNiQ
+xrCYye68g43zTaxBgR5rBokgBaLcEo1AAoxE+j/j7Jfv7i7Y5MZbBRZOfBi/5gSo
+PXfsgPNz+p4Zgu4/YdLSy93wpqOZCcKJ5OQfbf8CgYEApBY3ilFEE0Zw80bFX20N
+qoLDwY7lxiCjGQ5UcIVkfHEAzY82IdBuNnL3Jt4S+wcbhupM6/tCDszGdUc9k6wQ
+K+TP1E/eXjTp2xnYhSTFy4KrQA+qOMWPMrS1oYJcPH/i8S690DVTJawSpva3qgtL
+BdqGLvSTqbINqoRmcdIP1Qo=
+-----END PRIVATE KEY-----)";
 
 struct PendingFile {
   bool active = false;
@@ -58,6 +106,7 @@ int g_received_files = 0;
 int g_sent_files = 0;
 char g_status[256] = "Starting";
 int g_announcements = 0;
+std::string g_tls_fingerprint;
 
 ssize_t recv_retry(int fd, char* buffer, size_t size);
 
@@ -75,12 +124,16 @@ struct ClientConnection {
   mbedtls_ssl_config config;
   mbedtls_entropy_context entropy;
   mbedtls_ctr_drbg_context ctr_drbg;
+  mbedtls_x509_crt certificate;
+  mbedtls_pk_context private_key;
 
   ClientConnection() {
     mbedtls_ssl_init(&ssl);
     mbedtls_ssl_config_init(&config);
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&ctr_drbg);
+    mbedtls_x509_crt_init(&certificate);
+    mbedtls_pk_init(&private_key);
   }
 };
 
@@ -477,6 +530,23 @@ std::string tls_peer_fingerprint(ClientConnection& connection) {
   return hex_encode(digest, sizeof(digest));
 }
 
+std::string certificate_fingerprint_from_pem(const char* certificate_pem) {
+  mbedtls_x509_crt certificate;
+  mbedtls_x509_crt_init(&certificate);
+  const int parsed = mbedtls_x509_crt_parse(&certificate,
+                                            reinterpret_cast<const unsigned char*>(certificate_pem),
+                                            std::strlen(certificate_pem) + 1);
+  if (parsed != 0 || !certificate.raw.p || certificate.raw.len == 0) {
+    mbedtls_x509_crt_free(&certificate);
+    return "";
+  }
+  unsigned char digest[32] = {};
+  mbedtls_sha256(certificate.raw.p, certificate.raw.len, digest, 0);
+  const std::string fingerprint = hex_encode(digest, sizeof(digest));
+  mbedtls_x509_crt_free(&certificate);
+  return fingerprint;
+}
+
 int stream_read(ClientConnection& connection, char* buffer, size_t size) {
   if (!connection.tls) {
     return static_cast<int>(recv_retry(connection.fd, buffer, size));
@@ -522,6 +592,8 @@ void close_client_connection(ClientConnection& connection) {
   }
   mbedtls_ctr_drbg_free(&connection.ctr_drbg);
   mbedtls_entropy_free(&connection.entropy);
+  mbedtls_pk_free(&connection.private_key);
+  mbedtls_x509_crt_free(&connection.certificate);
   mbedtls_ssl_free(&connection.ssl);
   mbedtls_ssl_config_free(&connection.config);
 }
@@ -559,6 +631,20 @@ void send_response(int fd, int status, const char* content_type, const std::stri
                 body.size());
   send_all(fd, header, std::strlen(header));
   send_all(fd, body.data(), body.size());
+}
+
+void send_response_stream(ClientConnection& connection, int status, const char* content_type, const std::string& body) {
+  const char* text = status == 200 ? "OK" : status == 400 ? "Bad Request" : status == 403 ? "Forbidden" : "Not Found";
+  char header[256];
+  std::snprintf(header,
+                sizeof(header),
+                "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %zu\r\nConnection: close\r\n\r\n",
+                status,
+                text,
+                content_type,
+                body.size());
+  stream_send_all(connection, header, std::strlen(header));
+  stream_send_all(connection, body.data(), body.size());
 }
 
 bool read_headers(int fd, std::string& request, std::string& initial_body) {
@@ -886,6 +972,75 @@ bool connect_client(const std::string& ip, int port, bool use_tls, ClientConnect
   return true;
 }
 
+bool accepted_connection_uses_tls(int fd) {
+  unsigned char first = 0;
+  const ssize_t got = recv(fd, &first, sizeof(first), MSG_PEEK);
+  return got == 1 && first == 0x16;
+}
+
+bool accept_tls_server(int fd, ClientConnection& connection) {
+  connection.fd = fd;
+  connection.tls = true;
+
+  const char* personalization = "localsend-switch-server";
+  int result = mbedtls_ctr_drbg_seed(&connection.ctr_drbg,
+                                     mbedtls_entropy_func,
+                                     &connection.entropy,
+                                     reinterpret_cast<const unsigned char*>(personalization),
+                                     std::strlen(personalization));
+  if (result != 0) {
+    append_log("tls server seed failed result=" + std::to_string(result));
+    return false;
+  }
+
+  result = mbedtls_x509_crt_parse(&connection.certificate,
+                                  reinterpret_cast<const unsigned char*>(kSwitchCertificatePem),
+                                  std::strlen(kSwitchCertificatePem) + 1);
+  if (result != 0) {
+    append_log("tls server cert parse failed result=" + std::to_string(result));
+    return false;
+  }
+  result = mbedtls_pk_parse_key(&connection.private_key,
+                                reinterpret_cast<const unsigned char*>(kSwitchPrivateKeyPem),
+                                std::strlen(kSwitchPrivateKeyPem) + 1,
+                                nullptr,
+                                0,
+                                mbedtls_ctr_drbg_random,
+                                &connection.ctr_drbg);
+  if (result != 0) {
+    append_log("tls server key parse failed result=" + std::to_string(result));
+    return false;
+  }
+
+  result = mbedtls_ssl_config_defaults(&connection.config, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
+  if (result != 0) {
+    append_log("tls server config failed result=" + std::to_string(result));
+    return false;
+  }
+  mbedtls_ssl_conf_rng(&connection.config, mbedtls_ctr_drbg_random, &connection.ctr_drbg);
+  result = mbedtls_ssl_conf_own_cert(&connection.config, &connection.certificate, &connection.private_key);
+  if (result != 0) {
+    append_log("tls server own cert failed result=" + std::to_string(result));
+    return false;
+  }
+  result = mbedtls_ssl_setup(&connection.ssl, &connection.config);
+  if (result != 0) {
+    append_log("tls server setup failed result=" + std::to_string(result));
+    return false;
+  }
+  connection.ssl_ready = true;
+  mbedtls_ssl_set_bio(&connection.ssl, &connection.fd, tls_send, tls_recv, nullptr);
+
+  while ((result = mbedtls_ssl_handshake(&connection.ssl)) != 0) {
+    if (!tls_retryable(result)) {
+      append_log("tls server handshake failed result=" + std::to_string(result));
+      return false;
+    }
+    svcSleepThread(1'000'000);
+  }
+  return true;
+}
+
 ClientHttpResult http_post_json(const std::string& ip, int port, const char* path, const std::string& body, bool use_tls = false) {
   ClientHttpResult result;
   ClientConnection connection;
@@ -1023,6 +1178,74 @@ bool read_chunked_body_to_file(int fd, const std::string& initial_body, FILE* ou
     }
 
     if (!fill_stream_buffer(fd, buffer, pos, chunk_size + 2)) {
+      return false;
+    }
+    std::fwrite(buffer.data() + pos, 1, chunk_size, out);
+    written += chunk_size;
+    pos += chunk_size;
+    if (pos + 1 >= buffer.size() || buffer[pos] != '\r' || buffer[pos + 1] != '\n') {
+      return false;
+    }
+    pos += 2;
+
+    if (pos > 64 * 1024) {
+      buffer.erase(0, pos);
+      pos = 0;
+    }
+  }
+}
+
+bool fill_stream_buffer(ClientConnection& connection, std::string& buffer, size_t pos, size_t need) {
+  char chunk[4096];
+  while (buffer.size() - pos < need) {
+    const int got = stream_read(connection, chunk, sizeof(chunk));
+    if (got <= 0) {
+      return false;
+    }
+    buffer.append(chunk, static_cast<size_t>(got));
+  }
+  return true;
+}
+
+bool read_chunked_body_to_file_stream(ClientConnection& connection, const std::string& initial_body, FILE* out, size_t& written) {
+  std::string buffer = initial_body;
+  size_t pos = 0;
+  written = 0;
+
+  while (true) {
+    size_t line_end = buffer.find("\r\n", pos);
+    while (line_end == std::string::npos) {
+      if (!fill_stream_buffer(connection, buffer, pos, buffer.size() - pos + 1)) {
+        return false;
+      }
+      line_end = buffer.find("\r\n", pos);
+    }
+
+    std::string size_text = buffer.substr(pos, line_end - pos);
+    const size_t semicolon = size_text.find(';');
+    if (semicolon != std::string::npos) {
+      size_text.resize(semicolon);
+    }
+    const size_t chunk_size = static_cast<size_t>(std::strtoull(size_text.c_str(), nullptr, 16));
+    pos = line_end + 2;
+
+    if (chunk_size == 0) {
+      while (true) {
+        line_end = buffer.find("\r\n", pos);
+        while (line_end == std::string::npos) {
+          if (!fill_stream_buffer(connection, buffer, pos, buffer.size() - pos + 1)) {
+            return false;
+          }
+          line_end = buffer.find("\r\n", pos);
+        }
+        if (line_end == pos) {
+          return true;
+        }
+        pos = line_end + 2;
+      }
+    }
+
+    if (!fill_stream_buffer(connection, buffer, pos, chunk_size + 2)) {
       return false;
     }
     std::fwrite(buffer.data() + pos, 1, chunk_size, out);
@@ -1271,7 +1494,8 @@ void send_outbox_file() {
 void handle_info(int fd) {
   const std::string body =
       "{\"alias\":\"LocalSend Switch\",\"version\":\"2.1\",\"deviceModel\":\"Nintendo Switch\","
-      "\"deviceType\":\"desktop\",\"fingerprint\":\"\",\"download\":false}";
+      "\"deviceType\":\"desktop\",\"fingerprint\":\"" + g_tls_fingerprint +
+      "\",\"port\":53317,\"protocol\":\"https\",\"download\":false}";
   send_response(fd, 200, "application/json", body);
 }
 
@@ -1297,7 +1521,7 @@ void handle_debug_log(int fd) {
   send_response(fd, 200, "text/plain", body);
 }
 
-void handle_prepare_upload(int fd, const std::string& body, bool v2) {
+std::string prepare_upload_response(const std::string& body, bool v2) {
   append_log("prepare-upload body bytes=" + std::to_string(body.size()));
   append_log(body.substr(0, 4096));
   g_session.active = true;
@@ -1382,6 +1606,11 @@ void handle_prepare_upload(int fd, const std::string& body, bool v2) {
   response += v2 ? "}}" : "}";
   append_log("prepare response=" + response);
   std::snprintf(g_status, sizeof(g_status), "Prepared: %d file(s)", g_session.file_count);
+  return response;
+}
+
+void handle_prepare_upload(int fd, const std::string& body, bool v2) {
+  const std::string response = prepare_upload_response(body, v2);
   send_response(fd, 200, "application/json", response);
 }
 
@@ -1461,6 +1690,83 @@ void handle_upload(int fd, const std::string& target, const std::string& initial
   send_response(fd, 200, "application/json", "{}");
 }
 
+void handle_upload_stream(ClientConnection& connection, const std::string& target, const std::string& initial_body, size_t length, bool chunked, bool v2) {
+  PendingFile* selected = nullptr;
+  const std::string file_id = query_value(target, "fileId");
+  const std::string token = query_value(target, "token");
+  append_log("upload query fileId=" + file_id + " token=" + token + " length=" + std::to_string(length) + " chunked=" + std::to_string(chunked) +
+             " tls=" + std::to_string(connection.tls));
+  for (int i = 0; i < g_session.file_count; ++i) {
+    if (g_session.files[i].active && (g_session.files[i].file_id == file_id || g_session.files[i].map_key == file_id || std::to_string(i) == file_id) &&
+        g_session.files[i].token == token) {
+      selected = &g_session.files[i];
+      break;
+    }
+  }
+
+  if (!g_session.active || (v2 && query_value(target, "sessionId") != g_session.session_id) || selected == nullptr) {
+    append_log("upload rejected active=" + std::to_string(g_session.active) + " sessionId=" + query_value(target, "sessionId"));
+    send_response_stream(connection, 403, "text/plain", "invalid session");
+    return;
+  }
+
+  mkdir(kInbox, 0777);
+  const std::string path = unique_inbox_path(selected->file_name);
+  FILE* out = std::fopen(path.c_str(), "wb");
+  if (!out) {
+    std::snprintf(g_status, sizeof(g_status), "Open failed: errno %d", errno);
+    append_log("open failed path=" + path + " errno=" + std::to_string(errno));
+    send_response_stream(connection, 400, "text/plain", "open failed");
+    return;
+  }
+
+  size_t written = 0;
+  bool complete = true;
+  if (chunked) {
+    complete = read_chunked_body_to_file_stream(connection, initial_body, out, written);
+  } else {
+    if (!initial_body.empty()) {
+      const size_t count = initial_body.size() > length ? length : initial_body.size();
+      std::fwrite(initial_body.data(), 1, count, out);
+      written += count;
+    }
+
+    char* buffer = static_cast<char*>(std::malloc(kBufferSize));
+    while (written < length) {
+      const size_t remaining = length - written;
+      const size_t want = remaining > kBufferSize ? kBufferSize : remaining;
+      const int got = stream_read(connection, buffer, want);
+      if (got <= 0) {
+        complete = false;
+        break;
+      }
+      std::fwrite(buffer, 1, static_cast<size_t>(got), out);
+      written += static_cast<size_t>(got);
+    }
+    std::free(buffer);
+  }
+  std::fclose(out);
+
+  if (!complete || (!chunked && written != length)) {
+    std::snprintf(g_status, sizeof(g_status), "Incomplete upload: %zu/%zu", written, length);
+    append_log("upload incomplete path=" + path + " written=" + std::to_string(written) + " length=" + std::to_string(length));
+    std::remove(path.c_str());
+    send_response_stream(connection, 400, "text/plain", "incomplete upload");
+    return;
+  }
+
+  ++g_received_files;
+  selected->active = false;
+  bool any_active = false;
+  for (int i = 0; i < g_session.file_count; ++i) {
+    any_active = any_active || g_session.files[i].active;
+  }
+  g_session.active = any_active;
+  std::snprintf(g_status, sizeof(g_status), "Received: %s (%zu bytes)", selected->file_name.c_str(), written);
+  append_log("upload ok path=" + path + " bytes=" + std::to_string(written) + " tls=" + std::to_string(connection.tls));
+  send_response_stream(connection, 200, "application/json", "{}");
+}
+
 void handle_cancel(int fd, const std::string& target, bool v2) {
   const std::string session_id = query_value(target, "sessionId");
   if (v2 && session_id.empty()) {
@@ -1510,6 +1816,94 @@ void handle_client(int fd) {
   }
 
   close(fd);
+}
+
+void handle_client_stream(ClientConnection& connection) {
+  std::string request;
+  std::string initial_body;
+  if (!read_headers_stream(connection, request, initial_body)) {
+    return;
+  }
+
+  const std::string target = first_target(request);
+  const size_t length = content_length(request);
+  const bool chunked = transfer_encoding_chunked(request);
+  append_log("request target=" + target + " length=" + std::to_string(length) + " chunked=" + std::to_string(chunked) +
+             " tls=" + std::to_string(connection.tls));
+
+  if (first_method_is(request, "GET") && (starts_with(target, "/api/localsend/v2/info") || starts_with(target, "/api/localsend/v1/info"))) {
+    const std::string body =
+        "{\"alias\":\"LocalSend Switch\",\"version\":\"2.1\",\"deviceModel\":\"Nintendo Switch\","
+        "\"deviceType\":\"desktop\",\"fingerprint\":\"" + g_tls_fingerprint +
+        "\",\"port\":53317,\"protocol\":\"https\",\"download\":false}";
+    send_response_stream(connection, 200, "application/json", body);
+  } else if (first_method_is(request, "GET") && starts_with(target, "/debug/log")) {
+    FILE* in = std::fopen(kLogPath, "rb");
+    if (!in) {
+      send_response_stream(connection, 404, "text/plain", "log not found");
+      return;
+    }
+    std::string body;
+    char chunk[1024];
+    while (true) {
+      const size_t got = std::fread(chunk, 1, sizeof(chunk), in);
+      if (got == 0) {
+        break;
+      }
+      body.append(chunk, got);
+      if (body.size() > 64 * 1024) {
+        body.erase(0, body.size() - 64 * 1024);
+      }
+    }
+    std::fclose(in);
+    send_response_stream(connection, 200, "text/plain", body);
+  } else if (first_method_is(request, "POST") && (starts_with(target, "/api/localsend/v2/register") || starts_with(target, "/api/localsend/v1/register"))) {
+    const std::string body =
+        "{\"alias\":\"LocalSend Switch\",\"version\":\"2.1\",\"deviceModel\":\"Nintendo Switch\","
+        "\"deviceType\":\"desktop\",\"fingerprint\":\"" + g_tls_fingerprint +
+        "\",\"port\":53317,\"protocol\":\"https\",\"download\":false}";
+    send_response_stream(connection, 200, "application/json", body);
+  } else if (first_method_is(request, "POST") && (starts_with(target, "/api/localsend/v2/prepare-upload") || starts_with(target, "/api/localsend/v1/send-request"))) {
+    const std::string response = prepare_upload_response(read_body_string_stream(connection, initial_body, length),
+                                                         starts_with(target, "/api/localsend/v2/prepare-upload"));
+    send_response_stream(connection, 200, "application/json", response);
+  } else if (first_method_is(request, "POST") && (starts_with(target, "/api/localsend/v2/upload") || starts_with(target, "/api/localsend/v1/send"))) {
+    handle_upload_stream(connection, target, initial_body, length, chunked, starts_with(target, "/api/localsend/v2/upload"));
+  } else if (first_method_is(request, "POST") && (starts_with(target, "/api/localsend/v2/cancel") || starts_with(target, "/api/localsend/v1/cancel"))) {
+    const bool v2 = starts_with(target, "/api/localsend/v2/cancel");
+    const std::string session_id = query_value(target, "sessionId");
+    if (v2 && session_id.empty()) {
+      append_log("cancel rejected: missing sessionId");
+      send_response_stream(connection, 400, "text/plain", "missing sessionId");
+      return;
+    }
+    if (v2 && (!g_session.active || session_id != g_session.session_id)) {
+      append_log("cancel ignored sessionId=" + session_id + " active=" + std::to_string(g_session.active));
+      send_response_stream(connection, 404, "text/plain", "session not found");
+      return;
+    }
+    reset_upload_session();
+    std::snprintf(g_status, sizeof(g_status), "Session cancelled");
+    append_log("cancel ok sessionId=" + (session_id.empty() ? std::string("<legacy>") : session_id));
+    send_response_stream(connection, 200, "text/plain", "ok");
+  } else {
+    send_response_stream(connection, 404, "text/plain", "not found");
+  }
+}
+
+void handle_accepted_client(int fd) {
+  if (!accepted_connection_uses_tls(fd)) {
+    handle_client(fd);
+    return;
+  }
+
+  ClientConnection connection;
+  if (!accept_tls_server(fd, connection)) {
+    close_client_connection(connection);
+    return;
+  }
+  handle_client_stream(connection);
+  close_client_connection(connection);
 }
 
 int create_server() {
@@ -1570,7 +1964,7 @@ void send_announcement() {
 
   const std::string payload =
       "{\"alias\":\"LocalSend Switch\",\"version\":\"2.1\",\"deviceModel\":\"Nintendo Switch\","
-      "\"deviceType\":\"desktop\",\"fingerprint\":\"\",\"port\":53317,\"protocol\":\"http\","
+      "\"deviceType\":\"desktop\",\"fingerprint\":\"" + g_tls_fingerprint + "\",\"port\":53317,\"protocol\":\"https\","
       "\"download\":false,\"announce\":true,\"announcement\":true}";
   bool sent_any = send_discovery_packet(fd, kMulticastGroup, payload);
   sent_any = send_discovery_packet(fd, kBroadcastAddress, payload) || sent_any;
@@ -1583,13 +1977,14 @@ void send_announcement() {
 void draw_status() {
   consoleClear();
   std::printf("LocalSend Handheld\n");
-  std::printf("Switch HTTP receive MVP\n\n");
-  std::printf("Listening: http://<switch-ip>:%d\n", kPort);
+  std::printf("Switch HTTP/HTTPS receive MVP\n\n");
+  std::printf("Listening: http+https://<switch-ip>:%d\n", kPort);
   std::printf("Discovery: multicast+broadcast announcements=%d\n", g_announcements);
+  std::printf("Protocol: https fingerprint=%s\n", g_tls_fingerprint.empty() ? "<missing>" : g_tls_fingerprint.c_str());
   std::printf("Inbox: %s\n", kInbox);
   std::printf("Outbox: %s\n", kOutbox);
   std::printf("Send target: %s\n", kTargetPath);
-  std::printf("Encryption must be disabled on peers.\n\n");
+  std::printf("Encryption can be enabled on peers.\n\n");
   std::printf("Files received: %d\n", g_received_files);
   std::printf("Files sent: %d\n", g_sent_files);
   std::printf("Status: %s\n\n", g_status);
@@ -1609,7 +2004,9 @@ int main(int argc, char* argv[]) {
   mkdir("sdmc:/switch/localsend", 0777);
   mkdir(kInbox, 0777);
   mkdir(kOutbox, 0777);
+  g_tls_fingerprint = certificate_fingerprint_from_pem(kSwitchCertificatePem);
   append_log("app started");
+  append_log("tls fingerprint=" + (g_tls_fingerprint.empty() ? std::string("<missing>") : g_tls_fingerprint));
 
   int server = create_server();
   if (server < 0) {
@@ -1642,7 +2039,7 @@ int main(int argc, char* argv[]) {
         set_blocking(client);
         std::snprintf(g_status, sizeof(g_status), "Handling request");
         draw_status();
-        handle_client(client);
+        handle_accepted_client(client);
       }
     }
 

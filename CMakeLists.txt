@@ -30,6 +30,7 @@ add_library(localsend_core
   src/core/protocol.cpp
   src/core/safe_path.cpp
   src/core/security.cpp
+  src/core/tls.cpp
 )
 
 target_include_directories(localsend_core

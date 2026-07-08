@@ -5,6 +5,7 @@
 #include "localsend/protocol.hpp"
 #include "localsend/safe_path.hpp"
 #include "localsend/security.hpp"
+#include "localsend/tls.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -133,6 +134,103 @@ void test_mbedtls_linked() {
 #else
   require(false, "mbedTLS should be enabled");
 #endif
+}
+
+void test_tls_loopback() {
+  const std::string certificate = R"(-----BEGIN CERTIFICATE-----
+MIIDEzCCAfugAwIBAgIUZAO97Ffzy9Gp+mEPoGoUsNQG6bUwDQYJKoZIhvcNAQEL
+BQAwGTEXMBUGA1UEAwwOTG9jYWxTZW5kIFVzZXIwHhcNMjYwNzA4MDQ0MTMwWhcN
+MzYwNzA1MDQ0MTMwWjAZMRcwFQYDVQQDDA5Mb2NhbFNlbmQgVXNlcjCCASIwDQYJ
+KoZIhvcNAQEBBQADggEPADCCAQoCggEBAM+nwggiabq3hjx+saaPohPLJEUg1Jnx
+4iQ5c0Z7T+zH7AkXrQwoR7RkZNMYaPXx7qTlDQxe0WEDexbtoeKCSDB3u3/4GkOL
+G0YgNeVrxGxN8DuaRleMRxS/Z1VoVPaZadNs0zjp931V5Zm2dFrnocERDjX6iWdZ
+lv9g/SF1EU0hdbprZSKrZSFt9ZCgXIDCnb/1MPle5yW1CuT4y6s9RVzFVJflKPU5
+4t0SIB0sVWFxqKKU207nBUfCldqyn+CUll+OsOFtmgsSrvV8QwOVLylIwKCi2Njj
+/mfIrYyNkDSP0IalQwln3VPdi3dUbgYw5WMed/rd7rYn4QhjRTvi2VECAwEAAaNT
+MFEwHQYDVR0OBBYEFHlwJYjjkjW5OPAsdyTE7w6cCzvcMB8GA1UdIwQYMBaAFHlw
+JYjjkjW5OPAsdyTE7w6cCzvcMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZIhvcNAQEL
+BQADggEBADpNbCblsdB9y2nvMEz4wTQambJQvYfTgPBOYgPa5nQxGc1wbFHiBr13
+QRzN/uNATcUNKtmJve3br/sea4Jr10VAX50pdrE+6v4c572UCG2/JrOu+k1fT+55
+iiaf1AR5FwU/MRC9eBESoOXy3JXsM8S9ZILfIqmfV+ca+S53rhhrrYjedRnLJkS0
+IN3Kvbzjy0o8VRMxCGuwB4iAgjiwpvNL5JZSw2rhf+C1KiGhjA+ldD3qonIxekMK
+zPo1oE1CUoAI2vUUEG0egmZ+MB9KFd5f09PZGcYOwmBLjU4/clJAnj4924axxVAd
+7XYy3eHGG4xk8GDyn7+fTaw2fgdBR+c=
+-----END CERTIFICATE-----)";
+  const std::string private_key = R"(-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDPp8IIImm6t4Y8
+frGmj6ITyyRFINSZ8eIkOXNGe0/sx+wJF60MKEe0ZGTTGGj18e6k5Q0MXtFhA3sW
+7aHigkgwd7t/+BpDixtGIDXla8RsTfA7mkZXjEcUv2dVaFT2mWnTbNM46fd9VeWZ
+tnRa56HBEQ41+olnWZb/YP0hdRFNIXW6a2Uiq2UhbfWQoFyAwp2/9TD5XucltQrk
++MurPUVcxVSX5Sj1OeLdEiAdLFVhcaiilNtO5wVHwpXasp/glJZfjrDhbZoLEq71
+fEMDlS8pSMCgotjY4/5nyK2MjZA0j9CGpUMJZ91T3Yt3VG4GMOVjHnf63e62J+EI
+Y0U74tlRAgMBAAECggEAM9vygjON8hqJRKxjU3SFhqnx6e20Cqo0ztUmK9D5+elH
+0lF+Xw3kMnHsGCf9doawEbA+XPuFENRctjIsfrQIsUoFooTkkj+4VQAQVbZfPKkO
+OORjctPOoKjYdqTyqw9PNYT1Dz6nFz8Pcx702gsFA4Ft6h8il5PxOOAQ930UEA26
+d7xsfSzBREqt94SwdXkmXTrPdb9DQJh5+mve6sUvvVJg2OXtncwW18q4dsh3LONn
+ATLsQXc5tFOPAXu5fihfmT4fBLEyZ5fNigfmxY3paGNKtXY4ChJNay8SVBR34mgW
+akxziAqqSc0uJHLcNpkiLOFM5nvON/fYW0hS2r1tjQKBgQD9r/60ipcYhP4m263n
+bPiYip0lFhkdAy8vc4BTMRCu6qPhy7AhKFwSxM2AkHREtkMp7CDO44dI5sREFAWy
+w7SMjxGIHl+oNaUu6vWGWP7rU9OR7t5HmgUWxdryjy17/rssTLW+FCiuOAWRrS+h
+9aCnLNPJTwNDeXd51oeDuBGhewKBgQDRjFeiGdXKPZ7WKiL2DWXjQs7stMKLRmR4
+R4nvw0uYpK5nkB33napz5ECNceU41G8kUAkiM5r/cJlppNkE66uA1aOl8Q1NRo64
+ViUPgsT0YygFz+Tb0YR9p9VWdhDzVZkxJdK1/ExFQ9y7RwX1OanF5keGthqRZrtQ
+y2XRo9iYowKBgCW212fhvqq/gsUmHYltMtwCp3APA/bDNW2Zfzde8PsAGRMFZA7Z
+4C5OIbr+PrrEWeHOn+YB/2fAHud8DojP/XR0BIg288OfDgqWlZ++dU9o6+gjGdqN
+NDp5eZ5b2Mg5S3w/fzld59pWq8VHePBcAuE3kdi4rWSHl1J+qTDU2ZInAoGAcTXg
+Voycq2H1QYGMV+DPLiP3BX13KaXDPBRyWl3pprM6ImuDNTcyUuB7W6+wBq8GyNiQ
+xrCYye68g43zTaxBgR5rBokgBaLcEo1AAoxE+j/j7Jfv7i7Y5MZbBRZOfBi/5gSo
+PXfsgPNz+p4Zgu4/YdLSy93wpqOZCcKJ5OQfbf8CgYEApBY3ilFEE0Zw80bFX20N
+qoLDwY7lxiCjGQ5UcIVkfHEAzY82IdBuNnL3Jt4S+wcbhupM6/tCDszGdUc9k6wQ
+K+TP1E/eXjTp2xnYhSTFy4KrQA+qOMWPMrS1oYJcPH/i8S690DVTJawSpva3qgtL
+BdqGLvSTqbINqoRmcdIP1Qo=
+-----END PRIVATE KEY-----)";
+  const std::string expected_fingerprint = "0078271eba40de56b3c0701a406a0d8a1dc430cd158af1899c6820fdd6a6964c";
+
+  const int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(listen_fd >= 0, "tls listen socket failed");
+  int enabled = 1;
+  ::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  require(::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "tls bind failed");
+  require(::listen(listen_fd, 1) == 0, "tls listen failed");
+  socklen_t len = sizeof(addr);
+  require(::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0, "tls getsockname failed");
+  const int port = ntohs(addr.sin_port);
+
+  std::thread server([&]() {
+    const int client_fd = ::accept(listen_fd, nullptr, nullptr);
+    require(client_fd >= 0, "tls accept failed");
+    auto tls = localsend::TlsConnection::server(client_fd, {certificate, private_key});
+    require(tls.handshake(), "server TLS handshake failed");
+    std::uint8_t buffer[16] = {};
+    const int read = tls.read(buffer, sizeof(buffer));
+    require(read == 4 && std::string(reinterpret_cast<char*>(buffer), 4) == "ping", "server TLS read failed");
+    const std::string pong = "pong";
+    require(tls.write_all(reinterpret_cast<const std::uint8_t*>(pong.data()), pong.size()), "server TLS write failed");
+    tls.close_notify();
+    ::close(listen_fd);
+  });
+
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(fd >= 0, "tls client socket failed");
+  sockaddr_in target{};
+  target.sin_family = AF_INET;
+  target.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  target.sin_port = htons(static_cast<uint16_t>(port));
+  require(::connect(fd, reinterpret_cast<sockaddr*>(&target), sizeof(target)) == 0, "tls client connect failed");
+  auto tls = localsend::TlsConnection::client(fd);
+  require(tls.handshake(), "client TLS handshake failed");
+  require(tls.peer_fingerprint() == expected_fingerprint, "client peer fingerprint failed");
+  const std::string ping = "ping";
+  require(tls.write_all(reinterpret_cast<const std::uint8_t*>(ping.data()), ping.size()), "client TLS write failed");
+  std::uint8_t buffer[16] = {};
+  const int read = tls.read(buffer, sizeof(buffer));
+  require(read == 4 && std::string(reinterpret_cast<char*>(buffer), 4) == "pong", "client TLS read failed");
+  tls.close_notify();
+  server.join();
 }
 
 void test_route_constants() {
@@ -618,6 +716,7 @@ int main() {
     test_multicast_dto();
     test_security_fingerprint();
     test_mbedtls_linked();
+    test_tls_loopback();
     test_route_constants();
     test_default_config_paths();
     test_config_round_trip();

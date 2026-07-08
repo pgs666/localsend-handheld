@@ -16,12 +16,13 @@ Observed upstream behavior:
 Implementation sequence:
 
 1. Keep HTTP mode as a debug fallback.
-2. Add dependency-free certificate fingerprint parsing in core.
-3. Vendor mbedTLS at a pinned version and build it for desktop, Switch, and PSV.
-4. Generate or load `cert.pem` and `key.pem` per platform.
-5. Wrap the existing HTTP server/client stream operations with mbedTLS.
-6. Advertise `protocol: "https"` and the certificate fingerprint.
-7. Verify peer fingerprints when discovery/register/info provided one.
+2. Add dependency-free certificate fingerprint parsing in core. Done.
+3. Vendor mbedTLS at a pinned version and build it for desktop, Switch, and PSV. Done for CI checkout and desktop core linkage.
+4. Add a reusable TLS stream wrapper around existing TCP sockets. Done for desktop loopback tests.
+5. Generate or load `cert.pem` and `key.pem` per platform.
+6. Wrap the existing HTTP server/client stream operations with mbedTLS.
+7. Advertise `protocol: "https"` and the certificate fingerprint.
+8. Verify peer fingerprints when discovery/register/info provided one.
 
 Expected platform paths:
 

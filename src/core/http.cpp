@@ -1176,8 +1176,50 @@ bool send_files_http(const Device& target,
                      const std::vector<std::filesystem::path>& file_paths,
                      const InfoRegisterDto& self,
                      TransferStore* transfers) {
+  return send_files_http_detailed(target, file_paths, self, transfers).ok;
+}
+
+SendFilesResult send_files_http_detailed(const Device& target,
+                                         const std::vector<std::filesystem::path>& file_paths,
+                                         const InfoRegisterDto& self,
+                                         TransferStore* transfers) {
+  auto result_error = [](std::string message) {
+    SendFilesResult result;
+    result.ok = false;
+    result.error = std::move(message);
+    return result;
+  };
+  auto result_ok = []() {
+    SendFilesResult result;
+    result.ok = true;
+    return result;
+  };
+  auto compact_body = [](std::string body) {
+    constexpr std::size_t kMaxBody = 120;
+    for (char& c : body) {
+      if (c == '\r' || c == '\n' || c == '\t') {
+        c = ' ';
+      }
+    }
+    if (body.size() > kMaxBody) {
+      body.resize(kMaxBody);
+      body += "...";
+    }
+    return body;
+  };
+  auto fail_transfers = [transfers](const std::vector<std::uint64_t>& transfer_ids, const std::string& message) {
+    if (!transfers) {
+      return;
+    }
+    for (const std::uint64_t transfer_id : transfer_ids) {
+      if (transfer_id != 0) {
+        transfers->fail(transfer_id, message);
+      }
+    }
+  };
+
   if (file_paths.empty()) {
-    return false;
+    return result_error("no files selected");
   }
 
   std::vector<FileDto> files;
@@ -1187,7 +1229,7 @@ bool send_files_http(const Device& target,
   for (std::size_t i = 0; i < file_paths.size(); ++i) {
     std::ifstream probe(file_paths[i], std::ios::binary);
     if (!probe) {
-      return false;
+      return result_error("source file is not readable: " + file_paths[i].filename().string());
     }
 
     FileDto file;
@@ -1234,17 +1276,13 @@ bool send_files_http(const Device& target,
         }
       }
     }
-    return true;
+    return result_ok();
   }
   if (prepared.status != 200) {
-    if (transfers) {
-      for (const std::uint64_t transfer_id : transfer_ids) {
-        if (transfer_id != 0) {
-          transfers->fail(transfer_id, "prepare upload failed");
-        }
-      }
-    }
-    return false;
+    const std::string message = "prepare-upload failed status=" + std::to_string(prepared.status) +
+                                " body=" + compact_body(prepared.body);
+    fail_transfers(transfer_ids, message);
+    return result_error(message);
   }
 
   PrepareUploadResponseDto response;
@@ -1259,17 +1297,19 @@ bool send_files_http(const Device& target,
       }
     }
   } catch (const std::exception&) {
-    if (transfers) {
-      for (const std::uint64_t transfer_id : transfer_ids) {
-        if (transfer_id != 0) {
-          transfers->fail(transfer_id, "invalid prepare upload response");
-        }
-      }
-    }
-    return false;
+    const std::string message = "invalid prepare-upload response: " + compact_body(prepared.body);
+    fail_transfers(transfer_ids, message);
+    return result_error(message);
+  }
+
+  if (v2 && response.session_id.empty()) {
+    const std::string message = "prepare-upload response missing sessionId";
+    fail_transfers(transfer_ids, message);
+    return result_error(message);
   }
 
   bool all_uploaded = true;
+  std::string first_error;
   for (std::size_t i = 0; i < files.size(); ++i) {
     const FileDto& file = files[i];
     const std::uint64_t transfer_id = transfer_ids[i];
@@ -1286,7 +1326,7 @@ bool send_files_http(const Device& target,
       if (transfers && transfer_id != 0) {
         transfers->fail(transfer_id, "failed to open source file");
       }
-      return false;
+      return result_error("failed to open source file: " + file.file_name);
     }
 
     std::map<std::string, std::string> query = {
@@ -1313,8 +1353,14 @@ bool send_files_http(const Device& target,
                                               });
     debug_send_line("upload status=" + std::to_string(uploaded.status) + " body=" + uploaded.body);
     if (uploaded.status != 200) {
+      const std::string message = "upload failed file=" + file.file_name +
+                                  " status=" + std::to_string(uploaded.status) +
+                                  " body=" + compact_body(uploaded.body);
       if (transfers && transfer_id != 0) {
-        transfers->fail(transfer_id, "upload failed");
+        transfers->fail(transfer_id, message);
+      }
+      if (first_error.empty()) {
+        first_error = message;
       }
       all_uploaded = false;
     } else if (transfers && transfer_id != 0) {
@@ -1322,7 +1368,10 @@ bool send_files_http(const Device& target,
     }
   }
 
-  return all_uploaded;
+  if (!all_uploaded) {
+    return result_error(first_error.empty() ? "one or more uploads failed" : first_error);
+  }
+  return result_ok();
 }
 
 bool send_files_http(const Device& target, const std::vector<std::filesystem::path>& file_paths, const InfoRegisterDto& self) {

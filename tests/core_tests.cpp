@@ -1552,6 +1552,74 @@ void test_http_send_accepts_prepare_no_content() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_send_reports_prepare_failure() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-send-prepare-failure-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const auto source = dir / "failed.txt";
+  {
+    std::ofstream out(source, std::ios::binary);
+    out << "failed";
+  }
+
+  const int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(listen_fd >= 0, "prepare failure listen socket failed");
+  int enabled = 1;
+  ::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  require(::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "prepare failure bind failed");
+  require(::listen(listen_fd, 1) == 0, "prepare failure listen failed");
+  socklen_t len = sizeof(addr);
+  require(::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0, "prepare failure getsockname failed");
+  const int port = ntohs(addr.sin_port);
+
+  std::thread server([listen_fd]() {
+    const int client = ::accept(listen_fd, nullptr, nullptr);
+    if (client >= 0) {
+      char discard[4096];
+      static_cast<void>(::recv(client, discard, sizeof(discard), 0));
+      const char* body = "receiver busy";
+      std::ostringstream response;
+      response << "HTTP/1.1 500 Internal Server Error\r\n"
+               << "Content-Type: text/plain\r\n"
+               << "Content-Length: " << std::strlen(body) << "\r\n"
+               << "Connection: close\r\n\r\n"
+               << body;
+      const std::string text = response.str();
+      static_cast<void>(::send(client, text.data(), text.size(), 0));
+      ::close(client);
+    }
+    ::close(listen_fd);
+  });
+
+  localsend::Device target;
+  target.ip = "127.0.0.1";
+  target.port = port;
+  target.version = localsend::kProtocolVersion;
+  target.https = false;
+
+  localsend::InfoRegisterDto sender;
+  sender.alias = "Sender";
+  sender.port = 12345;
+  sender.protocol = localsend::ProtocolType::Http;
+
+  localsend::TransferStore transfers;
+  const localsend::SendFilesResult result = localsend::send_files_http_detailed(target, {source}, sender, &transfers);
+  server.join();
+  require(!result.ok, "prepare failure should fail detailed send");
+  require(result.error.find("status=500") != std::string::npos, "prepare failure status should be reported");
+  require(result.error.find("receiver busy") != std::string::npos, "prepare failure body should be reported");
+  const auto snapshot = transfers.snapshot();
+  require(snapshot.size() == 1, "prepare failure transfer count failed");
+  require(snapshot[0].status == localsend::TransferStatus::Failed, "prepare failure transfer status failed");
+  require(snapshot[0].error == result.error, "prepare failure transfer error should match result");
+
+  std::filesystem::remove_all(dir);
+}
+
 void test_http_send_treats_missing_tokens_as_skipped() {
   const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-send-skipped-tests";
   std::filesystem::remove_all(dir);
@@ -1725,6 +1793,7 @@ int main() {
     test_http_server_chunked_upload();
     test_http_incomplete_upload_removes_partial_file();
     test_http_send_accepts_prepare_no_content();
+    test_http_send_reports_prepare_failure();
     test_http_send_treats_missing_tokens_as_skipped();
     test_http_client_chunked_response();
   } catch (const std::exception& e) {

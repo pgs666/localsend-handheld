@@ -358,8 +358,8 @@ void AppService::discovery_loop(std::chrono::milliseconds interval, std::chrono:
 }
 
 void AppService::send_worker(Device device, std::vector<std::filesystem::path> file_paths) {
-  const bool ok = send_files_http(device, file_paths, self_, &transfers_);
-  set_last_send_error(ok ? "" : "HTTP send failed");
+  const SendFilesResult result = send_files_http_detailed(device, file_paths, self_, &transfers_);
+  set_last_send_error(result.ok ? "" : result.error);
   send_running_ = false;
 }
 

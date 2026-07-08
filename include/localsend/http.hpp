@@ -43,6 +43,11 @@ struct HttpResult {
   std::string body;
 };
 
+struct SendFilesResult {
+  bool ok = false;
+  std::string error;
+};
+
 HttpResult http_get(const std::string& host, int port, const std::string& path);
 HttpResult https_get(const std::string& host, int port, const std::string& path, const std::string& expected_fingerprint = "");
 HttpResult http_post(const std::string& host,
@@ -132,5 +137,9 @@ bool send_files_http(const Device& target,
                      const std::vector<std::filesystem::path>& file_paths,
                      const InfoRegisterDto& self,
                      TransferStore* transfers);
+SendFilesResult send_files_http_detailed(const Device& target,
+                                         const std::vector<std::filesystem::path>& file_paths,
+                                         const InfoRegisterDto& self,
+                                         TransferStore* transfers);
 
 } // namespace localsend

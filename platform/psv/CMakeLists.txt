@@ -70,7 +70,7 @@ target_compile_options(localsend-core-psv PRIVATE
 )
 
 target_link_libraries(localsend-core-psv PUBLIC
-  -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
+  -lpthread
 )
 
 add_executable(localsend-core-psv-smoke

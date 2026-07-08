@@ -607,7 +607,8 @@ std::unique_ptr<HttpStream> connect_http_stream(const std::string& host,
     auto tls = TlsConnection::client(fd, client_credentials);
     if (!tls.handshake()) {
       if (error) {
-        *error = "TLS handshake failed";
+        const std::string tls_error = tls.last_error();
+        *error = tls_error.empty() ? "TLS handshake failed" : tls_error;
       }
       close_fd(fd);
       return nullptr;

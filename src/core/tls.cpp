@@ -56,6 +56,20 @@ bool retryable_tls_result(int result) {
   return result == MBEDTLS_ERR_SSL_WANT_READ || result == MBEDTLS_ERR_SSL_WANT_WRITE;
 }
 
+std::string mbedtls_error_message(const char* operation, int result) {
+  char buffer[160] = {};
+  mbedtls_strerror(result, buffer, sizeof(buffer));
+  std::string text(operation);
+  text += " failed: ";
+  text += std::to_string(result);
+  if (buffer[0] != '\0') {
+    text += " (";
+    text += buffer;
+    text += ")";
+  }
+  return text;
+}
+
 } // namespace
 
 struct TlsConnection::Impl {
@@ -67,6 +81,7 @@ struct TlsConnection::Impl {
   mbedtls_ctr_drbg_context ctr_drbg;
   mbedtls_x509_crt certificate;
   mbedtls_pk_context private_key;
+  std::string last_error;
 
   Impl() {
     mbedtls_ssl_init(&ssl);
@@ -213,9 +228,11 @@ bool TlsConnection::handshake() {
   int result = 0;
   while ((result = mbedtls_ssl_handshake(&impl_->ssl)) != 0) {
     if (!retryable_tls_result(result)) {
+      impl_->last_error = mbedtls_error_message("TLS handshake", result);
       return false;
     }
   }
+  impl_->last_error.clear();
   return true;
 }
 
@@ -224,6 +241,11 @@ int TlsConnection::read(std::uint8_t* buffer, std::size_t size) {
     const int result = mbedtls_ssl_read(&impl_->ssl, buffer, size);
     if (retryable_tls_result(result)) {
       continue;
+    }
+    if (result < 0 && result != MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+      impl_->last_error = mbedtls_error_message("TLS read", result);
+    } else {
+      impl_->last_error.clear();
     }
     return result;
   }
@@ -236,16 +258,22 @@ bool TlsConnection::write_all(const std::uint8_t* data, std::size_t size) {
       continue;
     }
     if (written <= 0) {
+      impl_->last_error = mbedtls_error_message("TLS write", written);
       return false;
     }
     data += written;
     size -= static_cast<std::size_t>(written);
   }
+  impl_->last_error.clear();
   return true;
 }
 
 void TlsConnection::close_notify() {
-  while (retryable_tls_result(mbedtls_ssl_close_notify(&impl_->ssl))) {
+  int result = 0;
+  while (retryable_tls_result(result = mbedtls_ssl_close_notify(&impl_->ssl))) {
+  }
+  if (result < 0) {
+    impl_->last_error = mbedtls_error_message("TLS close_notify", result);
   }
 }
 
@@ -256,6 +284,10 @@ std::string TlsConnection::peer_fingerprint() const {
   }
   const std::vector<std::uint8_t> der(peer->raw.p, peer->raw.p + peer->raw.len);
   return sha256_hex(der);
+}
+
+std::string TlsConnection::last_error() const {
+  return impl_->last_error;
 }
 
 } // namespace localsend

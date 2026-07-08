@@ -30,6 +30,7 @@ public:
   bool write_all(const std::uint8_t* data, std::size_t size);
   void close_notify();
   std::string peer_fingerprint() const;
+  std::string last_error() const;
 
 private:
   struct Impl;

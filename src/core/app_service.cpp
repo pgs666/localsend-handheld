@@ -17,6 +17,24 @@ namespace {
 
 constexpr auto kDiscoveryStaleAge = std::chrono::seconds(30);
 
+bool same_manual_device(const AppConfig::ManualDevice& lhs, const AppConfig::ManualDevice& rhs) {
+  if (!lhs.fingerprint.empty() && !rhs.fingerprint.empty()) {
+    return lhs.fingerprint == rhs.fingerprint;
+  }
+  return lhs.ip == rhs.ip && lhs.port == rhs.port;
+}
+
+Device device_from_manual(const AppConfig::ManualDevice& manual) {
+  Device device;
+  device.ip = manual.ip;
+  device.port = manual.port;
+  device.https = manual.https;
+  device.alias = manual.alias;
+  device.fingerprint = manual.fingerprint;
+  device.version = "2.1";
+  return device;
+}
+
 std::string default_device_model(PlatformKind platform) {
   switch (platform) {
   case PlatformKind::Switch:
@@ -228,13 +246,31 @@ std::string AppService::add_manual_device(std::string ip,
                                           bool https,
                                           std::string alias,
                                           std::string fingerprint) {
-  Device device;
-  device.ip = std::move(ip);
-  device.port = port;
-  device.https = https;
-  device.alias = std::move(alias);
-  device.fingerprint = std::move(fingerprint);
-  device.version = "2.1";
+  AppConfig::ManualDevice manual;
+  manual.ip = ip;
+  manual.port = port;
+  manual.https = https;
+  manual.alias = alias;
+  manual.fingerprint = fingerprint;
+
+  auto existing = std::find_if(config_.manual_devices.begin(),
+                               config_.manual_devices.end(),
+                               [&manual](const AppConfig::ManualDevice& device) {
+                                 return same_manual_device(device, manual);
+                               });
+  std::string previous_key;
+  if (existing != config_.manual_devices.end()) {
+    previous_key = device_key(device_from_manual(*existing));
+    *existing = manual;
+  } else {
+    config_.manual_devices.push_back(manual);
+  }
+
+  Device device = device_from_manual(manual);
+  const std::string key = device_key(device);
+  if (!previous_key.empty() && previous_key != key) {
+    devices_.remove(previous_key);
+  }
   return devices_.upsert_manual(std::move(device));
 }
 
@@ -340,14 +376,7 @@ InfoRegisterDto AppService::make_self_info() const {
 
 void AppService::load_configured_manual_devices() {
   for (const auto& manual : config_.manual_devices) {
-    Device device;
-    device.ip = manual.ip;
-    device.port = manual.port;
-    device.https = manual.https;
-    device.fingerprint = manual.fingerprint;
-    device.alias = manual.alias;
-    device.version = "2.1";
-    devices_.upsert_manual(std::move(device));
+    devices_.upsert_manual(device_from_manual(manual));
   }
 }
 

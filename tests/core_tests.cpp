@@ -743,6 +743,17 @@ void test_app_service_update_and_save_config() {
   require(!service.config().discovery_enabled, "service discovery config update failed");
   require(service.status().device_count == 1, "service config manual devices should load on update");
   require(service.devices().get("endpoint:192.168.1.40:53317").has_value(), "service updated manual device missing");
+  const std::string runtime_key = service.add_manual_device("192.168.1.41", 53317, false, "Runtime Manual", "");
+  require(runtime_key == "endpoint:192.168.1.41:53317", "runtime manual key failed");
+  require(service.config().manual_devices.size() == 2, "runtime manual should update config");
+  require(service.status().device_count == 2, "runtime manual should update device store");
+  require(service.add_manual_device("192.168.1.41", 53317, true, "Runtime Updated", "runtime-fingerprint") ==
+              "fingerprint:runtime-fingerprint",
+          "runtime manual fingerprint key failed");
+  require(service.config().manual_devices.size() == 2, "runtime manual duplicate should update config");
+  require(service.config().manual_devices[1].alias == "Runtime Updated", "runtime manual config alias update failed");
+  require(service.config().manual_devices[1].https, "runtime manual config protocol update failed");
+  require(service.config().manual_devices[1].fingerprint == "runtime-fingerprint", "runtime manual config fingerprint update failed");
   require(service.save_config(), "service config save failed");
 
   const auto loaded = localsend::load_config(localsend::PlatformKind::Desktop, updated.config_path);
@@ -750,7 +761,11 @@ void test_app_service_update_and_save_config() {
   require(loaded.port == 0, "service saved port failed");
   require(!loaded.discovery_enabled, "service saved discovery failed");
   require(loaded.auto_accept, "service saved auto accept failed");
-  require(loaded.manual_devices.size() == 1, "service saved manual device count failed");
+  require(loaded.manual_devices.size() == 2, "service saved manual device count failed");
+  require(loaded.manual_devices[1].ip == "192.168.1.41", "service saved runtime manual ip failed");
+  require(loaded.manual_devices[1].alias == "Runtime Updated", "service saved runtime manual alias failed");
+  require(loaded.manual_devices[1].https, "service saved runtime manual protocol failed");
+  require(loaded.manual_devices[1].fingerprint == "runtime-fingerprint", "service saved runtime manual fingerprint failed");
 
   require(service.start_server(), "service config test server failed to start");
   auto rejected = updated;

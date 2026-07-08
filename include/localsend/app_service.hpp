@@ -76,6 +76,7 @@ public:
   void poll_server_once();
   bool server_running() const { return server_ != nullptr; }
   std::string last_server_error() const;
+  bool restart_core();
 
   bool announce_once() const;
   int refresh_discovery(std::chrono::milliseconds timeout);
@@ -126,13 +127,13 @@ private:
   mutable std::mutex send_status_mutex_;
   std::string last_send_error_;
   std::string send_status_message_;
+  std::chrono::milliseconds discovery_interval_{std::chrono::seconds(5)};
+  std::chrono::milliseconds discovery_scan_timeout_{std::chrono::milliseconds(500)};
 #if LOCALSEND_PLATFORM_PSV
   pthread_t discovery_thread_{};
   pthread_t send_thread_{};
   bool discovery_thread_started_ = false;
   bool send_thread_started_ = false;
-  std::chrono::milliseconds discovery_interval_{std::chrono::seconds(5)};
-  std::chrono::milliseconds discovery_scan_timeout_{std::chrono::milliseconds(500)};
   Device send_device_;
   std::vector<std::filesystem::path> send_file_paths_;
 #else

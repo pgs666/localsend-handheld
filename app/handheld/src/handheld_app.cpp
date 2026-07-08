@@ -39,6 +39,7 @@ struct KeyLabels {
   std::string cancel;
   std::string next_peer;
   std::string next_file;
+  std::string restart_core;
   std::string save_peer;
   std::string remove_peer;
 };
@@ -46,13 +47,13 @@ struct KeyLabels {
 KeyLabels key_labels_for_platform(PlatformKind platform) {
   switch (platform) {
   case PlatformKind::Switch:
-    return {"X", "Plus", "B", "Y", "R", "L", "Minus"};
+    return {"X", "Plus", "B", "Y", "R", "A", "L", "Minus"};
   case PlatformKind::Psv:
-    return {"Square", "Start", "Circle", "Triangle", "R", "L", "Select"};
+    return {"Square", "Start", "Circle", "Triangle", "R", "Cross", "L", "Select"};
   case PlatformKind::Desktop:
-    return {"X", "Start", "B", "Y", "RB", "LB", "Back"};
+    return {"X", "Start", "B", "Y", "RB", "A", "LB", "Back"};
   }
-  return {"X", "Start", "B", "Y", "RB", "LB", "Back"};
+  return {"X", "Start", "B", "Y", "RB", "A", "LB", "Back"};
 }
 
 std::string initial_send_prompt(const KeyLabels& keys) {
@@ -366,6 +367,23 @@ std::unique_ptr<AppService> start_service(const HandheldAppConfig& app_config,
   return service;
 }
 
+void update_core_state_from_service(AppService& service, RuntimeState& state) {
+  const AppServiceStatus status = service.status();
+  state.server_started = status.server_running;
+  state.discovery_started = status.discovery_running;
+  state.server_port = status.port == 0 ? state.server_port : status.port;
+  state.server_status = status.server_running ? "Started" : "Failed to start";
+  if (status.discovery_running) {
+    state.discovery_status = "Scanning and announcing";
+  } else if (service.config().discovery_enabled && status.server_running) {
+    state.discovery_status = "Announce-only fallback";
+  } else if (service.config().discovery_enabled) {
+    state.discovery_status = "Server not started";
+  } else {
+    state.discovery_status = "Disabled";
+  }
+}
+
 } // namespace
 
 int run_handheld_app(const HandheldAppConfig& config) {
@@ -418,7 +436,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
   log_line("Selected file: " + state.selected_file_status);
 
   std::unique_ptr<AppService> service;
-  const bool start_service_before_ui = config.platform != PlatformKind::Switch;
+  const bool start_service_before_ui = config.platform == PlatformKind::Desktop;
   if (start_service_before_ui) {
     try {
       service = start_service(config, service_config, state);
@@ -431,7 +449,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
     }
   } else {
     state.server_status = "Waiting for UI";
-    log_line("Switch startup: receive server deferred until first stable frames");
+    log_line("Handheld startup: receive server deferred until first stable frames");
   }
 
   PanelRefs refs;
@@ -563,6 +581,39 @@ int run_handheld_app(const HandheldAppConfig& config) {
     log_line("Selected file: " + state.selected_file_status);
     return true;
   });
+  frame->registerAction(action_label("Restart core", keys.restart_core), brls::BUTTON_A, [&](brls::View*) {
+    if (!service) {
+      state.server_status = "Restarting";
+      refresh_panel(state, refs);
+      log_line("Core restart requested before service exists");
+      try {
+        service = start_service(config, service_config, state);
+      } catch (const std::exception& e) {
+        state.server_status = std::string("Exception: ") + e.what();
+        log_line(state.server_status);
+      } catch (...) {
+        state.server_status = "Unknown exception";
+        log_line(state.server_status);
+      }
+      refresh_panel(state, refs);
+      return true;
+    }
+
+    log_line("Core restart requested");
+    state.server_status = "Restarting";
+    state.discovery_status = "Restarting";
+    refresh_panel(state, refs);
+    const bool ok = service->restart_core();
+    update_core_state_from_service(*service, state);
+    if (!ok) {
+      const std::string error = service->last_server_error();
+      log_line("Core restart failed" + (error.empty() ? std::string() : ": " + error));
+    } else {
+      log_line("Core restart ok");
+    }
+    refresh_panel(state, refs);
+    return true;
+  });
   frame->registerAction(action_label("Save peer", keys.save_peer), brls::BUTTON_LB, [&](brls::View*) {
     if (!service) {
       state.send_status = "Receive server not ready";
@@ -656,9 +707,9 @@ int run_handheld_app(const HandheldAppConfig& config) {
       log_line("mainLoop alive");
     }
 
-    if (!service && !state.server_started && config.platform == PlatformKind::Switch &&
+    if (!service && !state.server_started && config.platform != PlatformKind::Desktop &&
         std::chrono::steady_clock::now() >= deferred_start) {
-      log_line("Deferred Switch receive server start");
+      log_line("Deferred handheld receive server start");
       try {
         service = start_service(config, service_config, state);
       } catch (const std::exception& e) {

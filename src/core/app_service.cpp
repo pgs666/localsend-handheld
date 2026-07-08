@@ -183,6 +183,20 @@ void AppService::poll_server_once() {
   }
 }
 
+bool AppService::restart_core() {
+  stop_discovery();
+  stop_server();
+  const bool server_ok = start_server();
+  if (!server_ok) {
+    return false;
+  }
+  if (config_.discovery_enabled) {
+    static_cast<void>(announce_once());
+    static_cast<void>(start_discovery(discovery_interval_, discovery_scan_timeout_));
+  }
+  return true;
+}
+
 bool AppService::announce_once() const {
   if (!config_.discovery_enabled) {
     return false;
@@ -219,10 +233,10 @@ bool AppService::start_discovery(std::chrono::milliseconds interval, std::chrono
     return false;
   }
 
-  discovery_running_ = true;
-#if LOCALSEND_PLATFORM_PSV
   discovery_interval_ = interval;
   discovery_scan_timeout_ = scan_timeout;
+  discovery_running_ = true;
+#if LOCALSEND_PLATFORM_PSV
   if (::pthread_create(&discovery_thread_, nullptr, &AppService::discovery_thread_entry, this) != 0) {
     discovery_running_ = false;
     return false;

@@ -26,7 +26,7 @@ namespace localsend::handheld {
 namespace {
 
 constexpr const char* kProtocol = "LocalSend protocol 2.1";
-constexpr const char* kUiBuild = "shared-status-refresh-applet-frame";
+constexpr const char* kUiBuild = "psv-async-core-tls-fallback-20260708";
 
 FILE* g_log = nullptr;
 

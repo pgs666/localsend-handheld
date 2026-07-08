@@ -493,8 +493,14 @@ void AppService::send_worker(Device device, std::vector<std::filesystem::path> f
   std::optional<TlsCredentials> client_credentials;
   if (device.https) {
     try {
-      set_send_status_message("Loading HTTPS identity");
+      const bool cert_exists = std::filesystem::exists(config_.certificate_path);
+      const bool key_exists = std::filesystem::exists(config_.private_key_path);
+      set_send_status_message("Loading HTTPS identity cert=" +
+                              std::string(cert_exists ? "yes" : "no") +
+                              " key=" +
+                              std::string(key_exists ? "yes" : "no"));
       identity = load_or_create_tls_identity(config_.certificate_path, config_.private_key_path);
+      set_send_status_message("HTTPS identity ready " + identity->fingerprint.substr(0, std::min<std::size_t>(8, identity->fingerprint.size())));
       client_credentials = TlsCredentials{identity->certificate_pem, identity->private_key_pem};
     } catch (const std::exception& e) {
       set_last_send_error(std::string("failed to load HTTPS identity: ") + e.what());

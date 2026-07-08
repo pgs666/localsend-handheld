@@ -90,6 +90,6 @@ manual IP probing:
 - No PIN, text messages, recursive folders, `/prepare-download`, or `/download`.
 - HTTP upload sends and receives files serially with fixed 64 KiB streaming buffers.
 - Switch currently provides a console HTTP receive MVP with multicast/broadcast discovery announcements and debug logging.
-- Switch also has a temporary manual send path for protocol testing only: put one file in `sdmc:/switch/localsend/outbox/`, then press `X` in the NRO. It defaults to `192.168.31.150:53317`; create `sdmc:/switch/localsend/target.txt` containing `<ip> <port>` to override it. This path should be removed once the borealis device picker and file browser exist.
+- Switch also has a temporary manual send path for protocol testing only: put one file in `sdmc:/switch/localsend/outbox/`, then press `X` in the NRO. If the outbox is empty, the app creates `switch-test.txt` and sends it. It defaults to `192.168.31.150:53317`; create `sdmc:/switch/localsend/target.txt` containing `<ip> <port>` to override it. This path should be removed once the borealis device picker and file browser exist.
 - PSV currently builds a smoke `.vpk`; LocalSend protocol handling still needs to be ported there.
 - borealis handheld UI is not implemented yet.

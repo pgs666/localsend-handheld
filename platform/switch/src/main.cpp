@@ -21,6 +21,7 @@ constexpr int kMaxFiles = 16;
 constexpr const char* kInbox = "sdmc:/switch/localsend/inbox";
 // Temporary protocol bring-up path. Remove after borealis device picker and file browser land.
 constexpr const char* kOutbox = "sdmc:/switch/localsend/outbox";
+constexpr const char* kOutboxTestFile = "sdmc:/switch/localsend/outbox/switch-test.txt";
 constexpr const char* kTargetPath = "sdmc:/switch/localsend/target.txt";
 constexpr const char* kDefaultSendTargetIp = "192.168.31.150";
 constexpr const char* kLogPath = "sdmc:/switch/localsend/localsend.log";
@@ -719,6 +720,30 @@ bool first_outbox_file(std::string& path, size_t& size) {
   return found;
 }
 
+bool create_outbox_test_file(std::string& path, size_t& size) {
+  mkdir("sdmc:/switch/localsend", 0777);
+  mkdir(kOutbox, 0777);
+
+  constexpr const char* kBody =
+      "hello from LocalSend Handheld Switch test sender\n"
+      "This file was created because the temporary outbox was empty.\n";
+  FILE* out = std::fopen(kOutboxTestFile, "wb");
+  if (!out) {
+    return false;
+  }
+  const size_t expected = std::strlen(kBody);
+  const size_t written = std::fwrite(kBody, 1, expected, out);
+  const int closed = std::fclose(out);
+  if (written != expected || closed != 0) {
+    return false;
+  }
+
+  path = kOutboxTestFile;
+  size = expected;
+  append_log("send created outbox test file=" + path + " bytes=" + std::to_string(size));
+  return true;
+}
+
 bool extract_prepare_response(const std::string& body, std::string& session_id, std::string& token) {
   session_id = find_json_string(body, "sessionId", "");
   const size_t files_start = files_object_start(body);
@@ -753,9 +778,12 @@ void send_outbox_file() {
   std::string file_path;
   size_t file_size = 0;
   if (!first_outbox_file(file_path, file_size)) {
-    std::snprintf(g_status, sizeof(g_status), "Send failed: outbox empty");
-    append_log("send failed: outbox empty");
-    return;
+    append_log("send outbox empty; creating test file");
+    if (!create_outbox_test_file(file_path, file_size)) {
+      std::snprintf(g_status, sizeof(g_status), "Send failed: outbox empty");
+      append_log("send failed: outbox empty");
+      return;
+    }
   }
 
   const std::string file_name = sanitize_filename(filename_from_path(file_path));

@@ -107,6 +107,12 @@ int g_sent_files = 0;
 char g_status[256] = "Starting";
 int g_announcements = 0;
 std::string g_tls_fingerprint;
+bool g_server_tls_ready = false;
+mbedtls_ssl_config g_server_tls_config;
+mbedtls_entropy_context g_server_tls_entropy;
+mbedtls_ctr_drbg_context g_server_tls_ctr_drbg;
+mbedtls_x509_crt g_server_tls_certificate;
+mbedtls_pk_context g_server_tls_private_key;
 
 ssize_t recv_retry(int fd, char* buffer, size_t size);
 
@@ -547,6 +553,67 @@ std::string certificate_fingerprint_from_pem(const char* certificate_pem) {
   return fingerprint;
 }
 
+bool init_server_tls() {
+  mbedtls_ssl_config_init(&g_server_tls_config);
+  mbedtls_entropy_init(&g_server_tls_entropy);
+  mbedtls_ctr_drbg_init(&g_server_tls_ctr_drbg);
+  mbedtls_x509_crt_init(&g_server_tls_certificate);
+  mbedtls_pk_init(&g_server_tls_private_key);
+
+  const char* personalization = "localsend-switch-server";
+  int result = mbedtls_ctr_drbg_seed(&g_server_tls_ctr_drbg,
+                                     mbedtls_entropy_func,
+                                     &g_server_tls_entropy,
+                                     reinterpret_cast<const unsigned char*>(personalization),
+                                     std::strlen(personalization));
+  if (result != 0) {
+    append_log("tls server seed failed result=" + std::to_string(result));
+    return false;
+  }
+
+  result = mbedtls_x509_crt_parse(&g_server_tls_certificate,
+                                  reinterpret_cast<const unsigned char*>(kSwitchCertificatePem),
+                                  std::strlen(kSwitchCertificatePem) + 1);
+  if (result != 0) {
+    append_log("tls server cert parse failed result=" + std::to_string(result));
+    return false;
+  }
+  result = mbedtls_pk_parse_key(&g_server_tls_private_key,
+                                reinterpret_cast<const unsigned char*>(kSwitchPrivateKeyPem),
+                                std::strlen(kSwitchPrivateKeyPem) + 1,
+                                nullptr,
+                                0);
+  if (result != 0) {
+    append_log("tls server key parse failed result=" + std::to_string(result));
+    return false;
+  }
+
+  result = mbedtls_ssl_config_defaults(&g_server_tls_config, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
+  if (result != 0) {
+    append_log("tls server config failed result=" + std::to_string(result));
+    return false;
+  }
+  mbedtls_ssl_conf_rng(&g_server_tls_config, mbedtls_ctr_drbg_random, &g_server_tls_ctr_drbg);
+  result = mbedtls_ssl_conf_own_cert(&g_server_tls_config, &g_server_tls_certificate, &g_server_tls_private_key);
+  if (result != 0) {
+    append_log("tls server own cert failed result=" + std::to_string(result));
+    return false;
+  }
+
+  g_server_tls_ready = true;
+  append_log("tls server ready");
+  return true;
+}
+
+void free_server_tls() {
+  mbedtls_pk_free(&g_server_tls_private_key);
+  mbedtls_x509_crt_free(&g_server_tls_certificate);
+  mbedtls_ctr_drbg_free(&g_server_tls_ctr_drbg);
+  mbedtls_entropy_free(&g_server_tls_entropy);
+  mbedtls_ssl_config_free(&g_server_tls_config);
+  g_server_tls_ready = false;
+}
+
 int stream_read(ClientConnection& connection, char* buffer, size_t size) {
   if (!connection.tls) {
     return static_cast<int>(recv_retry(connection.fd, buffer, size));
@@ -919,49 +986,14 @@ bool accepted_connection_uses_tls(int fd) {
 }
 
 bool accept_tls_server(int fd, ClientConnection& connection) {
+  if (!g_server_tls_ready) {
+    append_log("tls server not ready");
+    return false;
+  }
   connection.fd = fd;
   connection.tls = true;
 
-  const char* personalization = "localsend-switch-server";
-  int result = mbedtls_ctr_drbg_seed(&connection.ctr_drbg,
-                                     mbedtls_entropy_func,
-                                     &connection.entropy,
-                                     reinterpret_cast<const unsigned char*>(personalization),
-                                     std::strlen(personalization));
-  if (result != 0) {
-    append_log("tls server seed failed result=" + std::to_string(result));
-    return false;
-  }
-
-  result = mbedtls_x509_crt_parse(&connection.certificate,
-                                  reinterpret_cast<const unsigned char*>(kSwitchCertificatePem),
-                                  std::strlen(kSwitchCertificatePem) + 1);
-  if (result != 0) {
-    append_log("tls server cert parse failed result=" + std::to_string(result));
-    return false;
-  }
-  result = mbedtls_pk_parse_key(&connection.private_key,
-                                reinterpret_cast<const unsigned char*>(kSwitchPrivateKeyPem),
-                                std::strlen(kSwitchPrivateKeyPem) + 1,
-                                nullptr,
-                                0);
-  if (result != 0) {
-    append_log("tls server key parse failed result=" + std::to_string(result));
-    return false;
-  }
-
-  result = mbedtls_ssl_config_defaults(&connection.config, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT);
-  if (result != 0) {
-    append_log("tls server config failed result=" + std::to_string(result));
-    return false;
-  }
-  mbedtls_ssl_conf_rng(&connection.config, mbedtls_ctr_drbg_random, &connection.ctr_drbg);
-  result = mbedtls_ssl_conf_own_cert(&connection.config, &connection.certificate, &connection.private_key);
-  if (result != 0) {
-    append_log("tls server own cert failed result=" + std::to_string(result));
-    return false;
-  }
-  result = mbedtls_ssl_setup(&connection.ssl, &connection.config);
+  int result = mbedtls_ssl_setup(&connection.ssl, &g_server_tls_config);
   if (result != 0) {
     append_log("tls server setup failed result=" + std::to_string(result));
     return false;
@@ -1918,7 +1950,7 @@ void draw_status() {
   std::printf("Switch HTTP/HTTPS receive MVP\n\n");
   std::printf("Listening: http+https://<switch-ip>:%d\n", kPort);
   std::printf("Discovery: multicast+broadcast announcements=%d\n", g_announcements);
-  std::printf("Protocol: https fingerprint=%s\n", g_tls_fingerprint.empty() ? "<missing>" : g_tls_fingerprint.c_str());
+  std::printf("Protocol: https %s fingerprint=%s\n", g_server_tls_ready ? "ready" : "not-ready", g_tls_fingerprint.empty() ? "<missing>" : g_tls_fingerprint.c_str());
   std::printf("Inbox: %s\n", kInbox);
   std::printf("Outbox: %s\n", kOutbox);
   std::printf("Send target: %s\n", kTargetPath);
@@ -1945,6 +1977,9 @@ int main(int argc, char* argv[]) {
   g_tls_fingerprint = certificate_fingerprint_from_pem(kSwitchCertificatePem);
   append_log("app started");
   append_log("tls fingerprint=" + (g_tls_fingerprint.empty() ? std::string("<missing>") : g_tls_fingerprint));
+  if (!init_server_tls()) {
+    append_log("tls server init failed");
+  }
 
   int server = create_server();
   if (server < 0) {
@@ -1993,6 +2028,7 @@ int main(int argc, char* argv[]) {
   if (server >= 0) {
     close(server);
   }
+  free_server_tls();
   socketExit();
   consoleExit(nullptr);
   return 0;

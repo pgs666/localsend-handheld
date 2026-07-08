@@ -77,6 +77,8 @@ brls::Label* make_section(const std::string& text) {
 }
 
 brls::Box* make_panel(const HandheldAppConfig& config, const RuntimeState& state, PanelRefs& refs) {
+  const std::string scheme = config.enable_tls ? "https" : "http";
+
   auto* root = new brls::Box(brls::Axis::COLUMN);
   root->setGrow(1.0f);
   root->setPadding(34, 70, 34, 70);
@@ -106,7 +108,7 @@ brls::Box* make_panel(const HandheldAppConfig& config, const RuntimeState& state
   root->addView(make_section("Feature wiring"));
   root->addView(make_row("Receive server", state.server_status, &refs.server_status));
   root->addView(make_row("Info endpoint",
-                         "http://" + state.ip + ":" + std::to_string(state.server_port) +
+                         scheme + "://" + state.ip + ":" + std::to_string(state.server_port) +
                              "/api/localsend/v2/info"));
   root->addView(make_row("Discovery", config.enable_discovery ? "Ready" : "Disabled", &refs.discovery_status));
   root->addView(make_row("File browser", "Core exists; controller UI pending"));

@@ -9,12 +9,14 @@ SWITCH_FTP_PORT="${SWITCH_FTP_PORT:-5000}"
 SWITCH_FTP_USER="${SWITCH_FTP_USER:-switch}"
 SWITCH_FTP_PASS="${SWITCH_FTP_PASS:-}"
 SWITCH_HTTP_PORT="${SWITCH_HTTP_PORT:-53317}"
+SWITCH_HTTP_SCHEME="${SWITCH_HTTP_SCHEME:-https}"
 SWITCH_NRO_PATH="${SWITCH_NRO_PATH:-sdmc:/switch/localsend-handheld/localsend-handheld.nro}"
 SWITCH_LOG_PATH="${SWITCH_LOG_PATH:-sdmc:/switch/localsend/localsend-borealis.log}"
 
 PSV_HOST="${PSV_HOST:-192.168.31.6}"
 PSV_FTP_PORT="${PSV_FTP_PORT:-1337}"
 PSV_HTTP_PORT="${PSV_HTTP_PORT:-53317}"
+PSV_HTTP_SCHEME="${PSV_HTTP_SCHEME:-http}"
 PSV_VPK_PATH="${PSV_VPK_PATH:-ux0:/data/localsend-handheld.vpk}"
 PSV_LOG_PATH="${PSV_LOG_PATH:-ux0:/data/localsend-borealis.log}"
 
@@ -27,8 +29,10 @@ Environment overrides:
   SWITCH_HOST        Default: ${SWITCH_HOST}
   SWITCH_FTP_PORT    Default: ${SWITCH_FTP_PORT}
   SWITCH_FTP_PASS    Required for Switch FTP.
+  SWITCH_HTTP_SCHEME Default: ${SWITCH_HTTP_SCHEME}
   PSV_HOST           Default: ${PSV_HOST}
   PSV_FTP_PORT       Default: ${PSV_FTP_PORT}
+  PSV_HTTP_SCHEME    Default: ${PSV_HTTP_SCHEME}
 
 Examples:
   ARTIFACT_DIR=build/artifacts/28927001724 $0 both
@@ -118,11 +122,17 @@ ftp_get_psv() {
 
 probe_http() {
   local name="$1"
-  local host="$2"
-  local port="$3"
+  local scheme="$2"
+  local host="$3"
+  local port="$4"
   echo "== ${name} /info =="
-  curl --connect-timeout 3 --max-time 8 -sS \
-    "http://${host}:${port}/api/localsend/v2/info" || true
+  if [[ "${scheme}" == "https" ]]; then
+    curl --connect-timeout 3 --max-time 8 -k -sS \
+      "https://${host}:${port}/api/localsend/v2/info" || true
+  else
+    curl --connect-timeout 3 --max-time 8 -sS \
+      "http://${host}:${port}/api/localsend/v2/info" || true
+  fi
   echo
 }
 
@@ -169,8 +179,8 @@ case "${cmd}" in
     deploy_psv
     ;;
   probe)
-    probe_http "Switch" "${SWITCH_HOST}" "${SWITCH_HTTP_PORT}"
-    probe_http "PSV" "${PSV_HOST}" "${PSV_HTTP_PORT}"
+    probe_http "Switch" "${SWITCH_HTTP_SCHEME}" "${SWITCH_HOST}" "${SWITCH_HTTP_PORT}"
+    probe_http "PSV" "${PSV_HTTP_SCHEME}" "${PSV_HOST}" "${PSV_HTTP_PORT}"
     ;;
   logs)
     show_logs

@@ -4,7 +4,7 @@ Current targets:
 
 - `desktop`: POSIX sockets, std threads, filesystem paths, protocol tests.
 - `switch`: libnx console `.nro` with HTTP/HTTPS receive MVP, HTTPS send bring-up path, UDP announcements, and inbox at `sdmc:/switch/localsend/inbox/`.
-- `psv`: VitaSDK smoke `.vpk`; protocol receive/send still needs implementation.
+- `psv`: VitaSDK borealis/GXM `.vpk` with HTTP receive, periodic discovery announce, and inbox at `ux0:data/localsend/inbox/`. The portable send core compiles for PSV; user-driven send UI is still pending.
 
 Planned handheld paths:
 

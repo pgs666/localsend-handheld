@@ -9,7 +9,7 @@ Initial scope:
 - LocalSend protocol v2.1-compatible HTTP mode.
 - Desktop protocol prototype for protocol development and tests.
 - Nintendo Switch `.nro` HTTP receive MVP.
-- PlayStation Vita `.vpk` smoke target.
+- PlayStation Vita `.vpk` borealis/GXM receive MVP.
 - Official LocalSend peers must disable Encryption until HTTPS support lands.
 
 ## Layout
@@ -91,5 +91,5 @@ manual IP probing:
 - HTTP upload sends and receives files serially with fixed 64 KiB streaming buffers.
 - Switch currently provides a console HTTP receive MVP with multicast/broadcast discovery announcements and debug logging.
 - Switch also has a temporary manual send path for protocol testing only: put one file in `sdmc:/switch/localsend/outbox/`, then press `X` in the NRO. If the outbox is empty, the app creates `switch-test.txt` and sends it. It defaults to `192.168.31.150:53317`; create `sdmc:/switch/localsend/target.txt` containing `<ip> <port>` to override it. This path should be removed once the borealis device picker and file browser exist.
-- PSV currently builds a smoke `.vpk`; LocalSend protocol handling still needs to be ported there.
-- borealis handheld UI is not implemented yet.
+- PSV currently starts a borealis/GXM `.vpk`, exposes HTTP receive routes on `ux0:data/localsend/inbox/`, and periodically announces itself for discovery. The portable send core is compiled for PSV, but the PSV UI still needs a device picker and file browser before user-driven sending is available.
+- borealis handheld UI is still a status screen on PSV; the full device list, transfer list, file picker, and settings pages are pending.

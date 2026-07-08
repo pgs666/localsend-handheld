@@ -1,4 +1,5 @@
 #include "localsend/constants.hpp"
+#include "localsend/config.hpp"
 #include "localsend/discovery.hpp"
 #include "localsend/http.hpp"
 #include "localsend/protocol.hpp"
@@ -12,6 +13,7 @@ namespace {
 void print_usage(const char* argv0) {
   std::cout << "Usage:\n"
             << "  " << argv0 << " info [alias]\n"
+            << "  " << argv0 << " config [path]\n"
             << "  " << argv0 << " serve [inbox] [port] [alias]\n"
             << "  " << argv0 << " send <ip> <port> <file> [alias]\n"
             << "  " << argv0 << " discover [milliseconds]\n";
@@ -38,10 +40,20 @@ int command_info(int argc, char** argv) {
   return 0;
 }
 
+int command_config(int argc, char** argv) {
+  const auto defaults = localsend::default_config(localsend::PlatformKind::Desktop);
+  const std::filesystem::path path = argc >= 3 ? argv[2] : defaults.config_path;
+  localsend::save_config(defaults, path);
+  std::cout << "wrote " << std::filesystem::absolute(path) << '\n';
+  return 0;
+}
+
 int command_serve(int argc, char** argv) {
-  const std::filesystem::path inbox = argc >= 3 ? argv[2] : "inbox";
-  const int port = argc >= 4 ? std::stoi(argv[3]) : localsend::kDefaultPort;
-  const std::string alias = argc >= 5 ? argv[4] : "LocalSend Handheld Desktop";
+  const auto defaults = localsend::default_config(localsend::PlatformKind::Desktop);
+  const auto config = localsend::load_config(localsend::PlatformKind::Desktop, defaults.config_path);
+  const std::filesystem::path inbox = argc >= 3 ? argv[2] : config.inbox_path;
+  const int port = argc >= 4 ? std::stoi(argv[3]) : config.port;
+  const std::string alias = argc >= 5 ? argv[4] : config.alias;
 
   localsend::LocalSendServer server(make_self(alias, port), inbox);
   if (!server.start(port)) {
@@ -104,6 +116,9 @@ int main(int argc, char** argv) {
   const std::string command = argv[1];
   if (command == "info") {
     return command_info(argc, argv);
+  }
+  if (command == "config") {
+    return command_config(argc, argv);
   }
   if (command == "serve") {
     return command_serve(argc, argv);

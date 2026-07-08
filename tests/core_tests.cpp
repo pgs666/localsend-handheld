@@ -1,4 +1,5 @@
 #include "localsend/constants.hpp"
+#include "localsend/config.hpp"
 #include "localsend/discovery.hpp"
 #include "localsend/http.hpp"
 #include "localsend/protocol.hpp"
@@ -92,6 +93,40 @@ void test_route_constants() {
   require(std::string(localsend::kDefaultMulticastGroup) == "224.0.0.167", "multicast group mismatch");
 }
 
+void test_default_config_paths() {
+  const auto switch_config = localsend::default_config(localsend::PlatformKind::Switch);
+  require(switch_config.inbox_path.string() == "sdmc:/switch/localsend/inbox/", "switch inbox path mismatch");
+  require(switch_config.config_path.string() == "sdmc:/switch/localsend/config.json", "switch config path mismatch");
+
+  const auto psv_config = localsend::default_config(localsend::PlatformKind::Psv);
+  require(psv_config.inbox_path.string() == "ux0:data/localsend/inbox/", "psv inbox path mismatch");
+  require(psv_config.config_path.string() == "ux0:data/localsend/config.json", "psv config path mismatch");
+}
+
+void test_config_round_trip() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-config-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const auto path = dir / "config.json";
+
+  auto config = localsend::default_config(localsend::PlatformKind::Desktop);
+  config.alias = "Desk";
+  config.inbox_path = "downloads";
+  config.port = 12345;
+  config.discovery_enabled = false;
+  config.auto_accept = true;
+  localsend::save_config(config, path);
+
+  const auto loaded = localsend::load_config(localsend::PlatformKind::Desktop, path);
+  require(loaded.alias == "Desk", "config alias round trip failed");
+  require(loaded.inbox_path.string() == "downloads", "config inbox round trip failed");
+  require(loaded.port == 12345, "config port round trip failed");
+  require(!loaded.discovery_enabled, "config discovery round trip failed");
+  require(loaded.auto_accept, "config auto accept round trip failed");
+
+  std::filesystem::remove_all(dir);
+}
+
 void test_safe_filename() {
   require(localsend::sanitize_filename("../bad/name.txt") == "badname.txt", "path traversal sanitize failed");
   require(localsend::sanitize_filename("..") == "file", "empty sanitize fallback failed");
@@ -170,6 +205,8 @@ int main() {
     test_prepare_upload_response_dto();
     test_multicast_dto();
     test_route_constants();
+    test_default_config_paths();
+    test_config_round_trip();
     test_safe_filename();
     test_unique_destination();
     test_http_server_routes_and_upload();

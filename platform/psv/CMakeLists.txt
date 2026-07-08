@@ -29,5 +29,5 @@ vita_create_self(localsend-handheld-psv.self localsend-handheld-psv UNSAFE)
 vita_create_vpk(localsend-handheld.vpk ${VITA_TITLEID} localsend-handheld-psv.self
   VERSION ${VITA_VERSION}
   NAME ${VITA_APP_NAME}
+  FILE assets/icon0.png sce_sys/icon0.png
 )
-

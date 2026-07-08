@@ -37,7 +37,7 @@ cmake -S . -B build-psv -DPLATFORM_DESKTOP=OFF -DPLATFORM_PSV=ON
 The repository CI builds handheld artifacts directly with platform SDK containers:
 
 - Switch: `platform/switch/localsend-handheld.nro` via `devkitpro/devkita64`.
-- PSV: `platform/psv/build/localsend-handheld.vpk` via `vitasdk/vitasdk`.
+- PSV: `platform/psv/build/localsend-handheld.vpk` via `vitasdk/vitasdk`, including `sce_sys/icon0.png`.
 
 Local platform builds require devkitPro/libnx or VitaSDK installed.
 

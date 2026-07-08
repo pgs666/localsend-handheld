@@ -21,11 +21,19 @@ add_executable(localsend-handheld-psv
 )
 
 target_link_libraries(localsend-handheld-psv
+  SceAppUtil_stub
+  SceCommonDialog_stub
+  SceGxm_stub
   SceDisplay_stub
   SceCtrl_stub
+  SceTouch_stub
+  ScePower_stub
+  SceAVConfig_stub
+  SceRegistryMgr_stub
+  -Wl,--whole-archive -lpthread -Wl,--no-whole-archive
 )
 
-vita_create_self(localsend-handheld-psv.self localsend-handheld-psv UNSAFE)
+vita_create_self(localsend-handheld-psv.self localsend-handheld-psv UNSAFE NOASLR)
 vita_create_vpk(localsend-handheld.vpk ${VITA_TITLEID} localsend-handheld-psv.self
   VERSION ${VITA_VERSION}
   NAME ${VITA_APP_NAME}

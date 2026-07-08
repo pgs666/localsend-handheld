@@ -8,6 +8,7 @@ USE_CONTAINER="${USE_CONTAINER:-0}"
 CONTAINER_ENGINE="${CONTAINER_ENGINE:-}"
 SWITCH_IMAGE="${SWITCH_IMAGE:-devkitpro/devkita64:latest}"
 PSV_IMAGE="${PSV_IMAGE:-vitasdk/vitasdk:latest}"
+SWITCH_BUILD_JOBS="${SWITCH_BUILD_JOBS:-4}"
 
 usage() {
   cat <<EOF
@@ -20,6 +21,7 @@ Environment:
   CONTAINER_ENGINE  docker or podman. Auto-detected when USE_CONTAINER=1.
   SWITCH_IMAGE      Default: ${SWITCH_IMAGE}
   PSV_IMAGE         Default: ${PSV_IMAGE}
+  SWITCH_BUILD_JOBS Parallel jobs for Switch builds. Default: ${SWITCH_BUILD_JOBS}
 
 Examples:
   $0 desktop
@@ -81,7 +83,7 @@ build_switch_host() {
     exit 1
   fi
   cmake -S "${ROOT_DIR}/platform/switch" -B "${BUILD_ROOT}/switch"
-  cmake --build "${BUILD_ROOT}/switch" --parallel 2
+  cmake --build "${BUILD_ROOT}/switch" --parallel "${SWITCH_BUILD_JOBS}"
   cp "${BUILD_ROOT}/switch/localsend-handheld.nro" "${ARTIFACT_DIR}/"
 }
 
@@ -92,7 +94,7 @@ build_switch_container() {
       https://github.com/xfangfang/wiliwili/releases/download/v0.1.0/libuam-f8c9eef01ffe06334d530393d636d69e2b52744b-1-any.pkg.tar.zst
     dkp-pacman -U --noconfirm /tmp/libuam.pkg.tar.zst
     cmake -S platform/switch -B build/local/switch
-    cmake --build build/local/switch --parallel 2
+    cmake --build build/local/switch --parallel \"${SWITCH_BUILD_JOBS}\"
   "
   cp "${BUILD_ROOT}/switch/localsend-handheld.nro" "${ARTIFACT_DIR}/"
 }

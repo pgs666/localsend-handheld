@@ -10,6 +10,7 @@
 #include <chrono>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #if LOCALSEND_PLATFORM_PSV
@@ -35,6 +36,7 @@ struct AppServiceStatus {
   bool https = false;
   std::string alias;
   std::string fingerprint;
+  std::string last_send_error;
   int port = 0;
   std::size_t device_count = 0;
   std::size_t transfer_count = 0;
@@ -89,10 +91,12 @@ public:
   bool start_send_to_device(const std::string& device_key, std::vector<std::filesystem::path> file_paths);
   void wait_for_send_idle();
   bool send_running() const { return send_running_; }
+  std::string last_send_error() const;
 
 private:
   InfoRegisterDto make_self_info() const;
   bool is_self_device(const Device& device) const;
+  void set_last_send_error(std::string error);
   void discovery_loop(std::chrono::milliseconds interval, std::chrono::milliseconds scan_timeout);
   void send_worker(Device device, std::vector<std::filesystem::path> file_paths);
 #if LOCALSEND_PLATFORM_PSV
@@ -108,6 +112,8 @@ private:
   std::unique_ptr<LocalSendServer> server_;
   std::atomic<bool> discovery_running_{false};
   std::atomic<bool> send_running_{false};
+  mutable std::mutex send_status_mutex_;
+  std::string last_send_error_;
 #if LOCALSEND_PLATFORM_PSV
   pthread_t discovery_thread_{};
   pthread_t send_thread_{};

@@ -2,6 +2,7 @@ set(LOCALSEND_CORE_SOURCES
   ${PROJECT_ROOT}/src/core/app_service.cpp
   ${PROJECT_ROOT}/src/core/config.cpp
   ${PROJECT_ROOT}/src/core/device_store.cpp
+  ${PROJECT_ROOT}/src/core/device_selection.cpp
   ${PROJECT_ROOT}/src/core/discovery.cpp
   ${PROJECT_ROOT}/src/core/file_browser.cpp
   ${PROJECT_ROOT}/src/core/http.cpp

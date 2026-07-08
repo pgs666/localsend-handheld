@@ -2,6 +2,11 @@
 
 #include <cstdio>
 
+extern "C" {
+unsigned int _newlib_heap_size_user = 160 * 1024 * 1024;
+unsigned int _pthread_stack_default_user = 2 * 1024 * 1024;
+}
+
 extern "C" void flockfile(FILE*) {}
 extern "C" void funlockfile(FILE*) {}
 

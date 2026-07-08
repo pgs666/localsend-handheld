@@ -1,6 +1,7 @@
 #include "localsend/handheld_app.hpp"
 
 #include "localsend/app_service.hpp"
+#include "localsend/device_selection.hpp"
 #include "localsend/file_browser.hpp"
 #include "localsend/status_format.hpp"
 
@@ -41,12 +42,15 @@ struct RuntimeState {
   std::string discovery_status = "Not started";
   std::string file_browser_status = "Not checked";
   std::string send_status = "Select a peer, then press X";
+  std::optional<std::size_t> selected_device_index;
+  std::string selected_peer_status = "No online peer selected";
 };
 
 struct PanelRefs {
   brls::Label* server_status = nullptr;
   brls::Label* discovery_status = nullptr;
   brls::Label* send_status = nullptr;
+  brls::Label* selected_peer = nullptr;
   brls::Label* device_summary = nullptr;
   brls::Label* transfer_summary = nullptr;
 };
@@ -127,6 +131,7 @@ brls::View* make_panel(const HandheldAppConfig& config, const RuntimeState& stat
   root->addView(make_row("Send action", state.send_status, &refs.send_status));
 
   root->addView(make_section("Peers"));
+  root->addView(make_row("Selected", state.selected_peer_status, &refs.selected_peer));
   root->addView(make_row("Known devices", "No peers yet", &refs.device_summary));
 
   root->addView(make_section("Transfers"));
@@ -187,13 +192,27 @@ void refresh_send_status(const std::string& text, const PanelRefs& refs) {
   }
 }
 
-void refresh_service_snapshot(const AppService& service, const PanelRefs& refs) {
+void refresh_service_snapshot(AppService& service, RuntimeState& state, const PanelRefs& refs) {
   const AppSnapshot snapshot = service.snapshot();
+  if (!selected_online_device(snapshot.devices, state.selected_device_index)) {
+    state.selected_device_index = first_online_device_index(snapshot.devices);
+  }
+  state.selected_peer_status = format_selected_device(snapshot.devices, state.selected_device_index);
+  if (refs.selected_peer) {
+    refs.selected_peer->setText(state.selected_peer_status);
+  }
   if (refs.device_summary) {
     refs.device_summary->setText(format_device_summary(snapshot.devices));
   }
   if (refs.transfer_summary) {
     refs.transfer_summary->setText(format_transfer_summary(snapshot.transfers));
+  }
+  if (!snapshot.status.last_send_error.empty()) {
+    state.send_status = "Send failed: " + snapshot.status.last_send_error;
+    refresh_send_status(state.send_status, refs);
+  } else if (snapshot.status.send_running) {
+    state.send_status = "Sending to selected peer";
+    refresh_send_status(state.send_status, refs);
   }
 }
 
@@ -316,10 +335,11 @@ int run_handheld_app(const HandheldAppConfig& config) {
     }
 
     const AppSnapshot snapshot = service->snapshot();
-    if (snapshot.devices.empty()) {
-      state.send_status = "No peer discovered";
+    const auto selected = selected_online_device(snapshot.devices, state.selected_device_index);
+    if (!selected) {
+      state.send_status = "No online peer selected";
       refresh_send_status(state.send_status, refs);
-      log_line("Send action rejected: no peer");
+      log_line("Send action rejected: no online peer");
       return true;
     }
 
@@ -331,16 +351,34 @@ int run_handheld_app(const HandheldAppConfig& config) {
       return true;
     }
 
-    const DeviceEntry& target = snapshot.devices.front();
-    if (service->start_send_to_device(target.key, std::vector<std::filesystem::path>{*file})) {
-      const std::string peer = target.device.alias.empty() ? target.device.ip : target.device.alias;
+    if (service->start_send_to_device(selected->key, std::vector<std::filesystem::path>{*file})) {
+      const std::string peer = selected->device.alias.empty() ? selected->device.ip : selected->device.alias;
       state.send_status = "Sending " + file->filename().string() + " to " + peer;
-      log_line("Send action started file=" + file->string() + " target=" + target.key);
+      log_line("Send action started file=" + file->string() + " target=" + selected->key);
     } else {
-      state.send_status = service->send_running() ? "Send already running" : "Send start failed";
-      log_line("Send action failed to start");
+      const std::string error = service->last_send_error();
+      state.send_status = error.empty() ? "Send start failed" : "Send failed: " + error;
+      log_line("Send action failed to start: " + state.send_status);
     }
     refresh_send_status(state.send_status, refs);
+    return true;
+  });
+  frame->registerAction("Next peer", brls::BUTTON_Y, [&](brls::View*) {
+    if (!service) {
+      state.selected_peer_status = "Receive server not ready";
+      if (refs.selected_peer) {
+        refs.selected_peer->setText(state.selected_peer_status);
+      }
+      return true;
+    }
+
+    const AppSnapshot snapshot = service->snapshot();
+    state.selected_device_index = next_online_device_index(snapshot.devices, state.selected_device_index);
+    state.selected_peer_status = format_selected_device(snapshot.devices, state.selected_device_index);
+    if (refs.selected_peer) {
+      refs.selected_peer->setText(state.selected_peer_status);
+    }
+    log_line("Selected peer: " + state.selected_peer_status);
     return true;
   });
   log_line("Using AppletFrame bottom-bar shell");
@@ -387,7 +425,7 @@ int run_handheld_app(const HandheldAppConfig& config) {
     }
 
     if (service && std::chrono::steady_clock::now() >= next_snapshot_refresh) {
-      refresh_service_snapshot(*service, refs);
+      refresh_service_snapshot(*service, state, refs);
       next_snapshot_refresh = std::chrono::steady_clock::now() + std::chrono::seconds(1);
     }
   }

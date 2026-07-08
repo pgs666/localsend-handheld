@@ -54,6 +54,7 @@ AppServiceStatus AppService::status() const {
   status.https = self_.protocol == ProtocolType::Https;
   status.alias = self_.alias;
   status.fingerprint = self_.fingerprint;
+  status.last_send_error = last_send_error();
   status.port = self_.port;
   status.device_count = devices_.snapshot().size();
   status.transfer_count = transfers_.snapshot().size();
@@ -240,6 +241,7 @@ bool AppService::send_files_to_device(const std::string& device_key, const std::
 
 bool AppService::start_send_to_device(const std::string& device_key, std::vector<std::filesystem::path> file_paths) {
   if (send_running_) {
+    set_last_send_error("send already running");
     return false;
   }
 
@@ -255,10 +257,16 @@ bool AppService::start_send_to_device(const std::string& device_key, std::vector
 #endif
 
   const std::optional<DeviceEntry> entry = devices_.get(device_key);
-  if (!entry || file_paths.empty()) {
+  if (!entry) {
+    set_last_send_error("selected peer disappeared");
+    return false;
+  }
+  if (file_paths.empty()) {
+    set_last_send_error("no files selected");
     return false;
   }
 
+  set_last_send_error("");
   send_running_ = true;
 #if LOCALSEND_PLATFORM_PSV
   send_device_ = entry->device;
@@ -266,6 +274,7 @@ bool AppService::start_send_to_device(const std::string& device_key, std::vector
   if (::pthread_create(&send_thread_, nullptr, &AppService::send_thread_entry, this) != 0) {
     send_running_ = false;
     send_file_paths_.clear();
+    set_last_send_error("failed to create send thread");
     return false;
   }
   send_thread_started_ = true;
@@ -273,6 +282,16 @@ bool AppService::start_send_to_device(const std::string& device_key, std::vector
   send_thread_ = std::thread(&AppService::send_worker, this, entry->device, std::move(file_paths));
 #endif
   return true;
+}
+
+std::string AppService::last_send_error() const {
+  std::lock_guard<std::mutex> lock(send_status_mutex_);
+  return last_send_error_;
+}
+
+void AppService::set_last_send_error(std::string error) {
+  std::lock_guard<std::mutex> lock(send_status_mutex_);
+  last_send_error_ = std::move(error);
 }
 
 void AppService::wait_for_send_idle() {
@@ -339,7 +358,8 @@ void AppService::discovery_loop(std::chrono::milliseconds interval, std::chrono:
 }
 
 void AppService::send_worker(Device device, std::vector<std::filesystem::path> file_paths) {
-  send_files_http(device, file_paths, self_, &transfers_);
+  const bool ok = send_files_http(device, file_paths, self_, &transfers_);
+  set_last_send_error(ok ? "" : "HTTP send failed");
   send_running_ = false;
 }
 

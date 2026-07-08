@@ -2,6 +2,7 @@
 #include "localsend/constants.hpp"
 #include "localsend/config.hpp"
 #include "localsend/device_store.hpp"
+#include "localsend/device_selection.hpp"
 #include "localsend/discovery.hpp"
 #include "localsend/file_browser.hpp"
 #include "localsend/http.hpp"
@@ -286,6 +287,56 @@ void test_status_format_summaries() {
           "transfer summary failed");
   require(transfer_summary.find("+1 older") != std::string::npos, "transfer summary overflow failed");
   require(localsend::format_transfer_summary({}) == "No transfers yet", "empty transfer summary failed");
+}
+
+void test_device_selection_online_cycle() {
+  std::vector<localsend::DeviceEntry> devices;
+
+  localsend::DeviceEntry offline;
+  offline.key = "offline";
+  offline.device.alias = "Offline";
+  offline.device.ip = "192.168.1.2";
+  offline.device.port = 53317;
+  offline.online = false;
+  devices.push_back(offline);
+
+  localsend::DeviceEntry first;
+  first.key = "first";
+  first.device.alias = "First";
+  first.device.ip = "192.168.1.3";
+  first.device.port = 53317;
+  first.online = true;
+  devices.push_back(first);
+
+  localsend::DeviceEntry second;
+  second.key = "second";
+  second.device.alias = "Second";
+  second.device.ip = "192.168.1.4";
+  second.device.port = 53318;
+  second.device.https = true;
+  second.online = true;
+  devices.push_back(second);
+
+  const auto first_index = localsend::first_online_device_index(devices);
+  require(first_index.has_value() && *first_index == 1, "first online device failed");
+
+  const auto next_index = localsend::next_online_device_index(devices, first_index);
+  require(next_index.has_value() && *next_index == 2, "next online device failed");
+
+  const auto wrapped_index = localsend::next_online_device_index(devices, next_index);
+  require(wrapped_index.has_value() && *wrapped_index == 1, "next online wrap failed");
+
+  const auto selected = localsend::selected_online_device(devices, 0);
+  require(selected.has_value() && selected->key == "first", "selected online fallback failed");
+
+  const std::string formatted = localsend::format_selected_device(devices, next_index);
+  require(formatted == "Second [https] 192.168.1.4:53318", "selected device format failed");
+
+  devices[1].online = false;
+  devices[2].online = false;
+  require(!localsend::first_online_device_index(devices).has_value(), "no online first should be empty");
+  require(localsend::format_selected_device(devices, std::nullopt) == "No online peer selected",
+          "no selected device format failed");
 }
 
 void test_security_fingerprint() {
@@ -795,8 +846,10 @@ void test_app_service_async_send_to_manual_device() {
   require(service.start_send_to_device(key, {source}), "async send should start");
   require(service.status().send_running, "async send status should be running");
   require(!service.start_send_to_device(key, {source}), "parallel async send should be rejected");
+  require(service.status().last_send_error == "send already running", "parallel async send error should be reported");
   service.wait_for_send_idle();
   require(!service.status().send_running, "async send status should stop");
+  require(service.status().last_send_error.empty(), "successful async send should clear error");
   require(std::filesystem::exists(inbox / "async.txt"), "async uploaded file missing");
 
   const auto transfers = service.transfers().snapshot();
@@ -807,6 +860,22 @@ void test_app_service_async_send_to_manual_device() {
 
   service.stop_server();
   std::filesystem::remove_all(dir);
+}
+
+void test_app_service_send_start_errors() {
+  auto config = localsend::default_config(localsend::PlatformKind::Desktop);
+  config.discovery_enabled = false;
+
+  localsend::AppServiceOptions options;
+  options.enable_tls = false;
+  localsend::AppService service(config, options);
+
+  require(!service.start_send_to_device("missing", {}), "missing send target should fail");
+  require(service.status().last_send_error == "selected peer disappeared", "missing send target error failed");
+
+  const std::string key = service.add_manual_device("127.0.0.1", 9, false, "Loopback", "");
+  require(!service.start_send_to_device(key, {}), "empty send file list should fail");
+  require(service.status().last_send_error == "no files selected", "empty send file error failed");
 }
 
 void test_safe_filename() {
@@ -1625,6 +1694,7 @@ int main() {
     test_device_store_upsert_and_sources();
     test_device_store_offline_remove_and_clear();
     test_status_format_summaries();
+    test_device_selection_online_cycle();
     test_security_fingerprint();
     test_tls_identity_persistence();
     test_mbedtls_linked();
@@ -1638,6 +1708,7 @@ int main() {
     test_app_service_register_updates_devices();
     test_app_service_send_to_manual_device();
     test_app_service_async_send_to_manual_device();
+    test_app_service_send_start_errors();
     test_safe_filename();
     test_unique_destination();
     test_file_browser_listing();

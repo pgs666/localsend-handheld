@@ -95,6 +95,7 @@ public:
 
 private:
   InfoRegisterDto make_self_info() const;
+  void load_configured_manual_devices();
   bool is_self_device(const Device& device) const;
   void set_last_send_error(std::string error);
   void discovery_loop(std::chrono::milliseconds interval, std::chrono::milliseconds scan_timeout);

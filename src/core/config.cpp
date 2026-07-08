@@ -101,6 +101,40 @@ bool optional_bool(const Json& json, const std::string& key, bool fallback) {
   return json.at(key).as_bool();
 }
 
+Json to_json(const AppConfig::ManualDevice& device) {
+  Json json = Json::object();
+  json["ip"] = device.ip;
+  json["port"] = static_cast<std::int64_t>(device.port);
+  json["https"] = device.https;
+  json["alias"] = device.alias;
+  json["fingerprint"] = device.fingerprint;
+  return json;
+}
+
+std::vector<AppConfig::ManualDevice> manual_devices_from_json(const Json& json) {
+  std::vector<AppConfig::ManualDevice> devices;
+  if (!json.contains("manualDevices") || !json.at("manualDevices").is_array()) {
+    return devices;
+  }
+
+  for (const Json& item : json.at("manualDevices").as_array()) {
+    if (!item.is_object()) {
+      continue;
+    }
+    AppConfig::ManualDevice device;
+    device.ip = optional_string(item, "ip", "");
+    if (device.ip.empty()) {
+      continue;
+    }
+    device.port = optional_int(item, "port", kDefaultPort);
+    device.https = optional_bool(item, "https", false);
+    device.alias = optional_string(item, "alias", "");
+    device.fingerprint = optional_string(item, "fingerprint", "");
+    devices.push_back(std::move(device));
+  }
+  return devices;
+}
+
 Json to_json(const AppConfig& config) {
   Json json = Json::object();
   json["alias"] = config.alias;
@@ -111,6 +145,11 @@ Json to_json(const AppConfig& config) {
   json["port"] = static_cast<std::int64_t>(config.port);
   json["discoveryEnabled"] = config.discovery_enabled;
   json["autoAccept"] = config.auto_accept;
+  Json manual_devices = Json::array();
+  for (const auto& device : config.manual_devices) {
+    manual_devices.push_back(to_json(device));
+  }
+  json["manualDevices"] = std::move(manual_devices);
   return json;
 }
 
@@ -127,6 +166,7 @@ AppConfig default_config(PlatformKind platform) {
   config.port = kDefaultPort;
   config.discovery_enabled = true;
   config.auto_accept = false;
+  config.manual_devices.clear();
   return config;
 }
 
@@ -149,6 +189,7 @@ AppConfig load_config(PlatformKind platform, const std::filesystem::path& path) 
   config.port = optional_int(json, "port", config.port);
   config.discovery_enabled = optional_bool(json, "discoveryEnabled", config.discovery_enabled);
   config.auto_accept = optional_bool(json, "autoAccept", config.auto_accept);
+  config.manual_devices = manual_devices_from_json(json);
   return config;
 }
 

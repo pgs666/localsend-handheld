@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 namespace localsend {
 
@@ -21,6 +22,14 @@ struct AppConfig {
   int port = 53317;
   bool discovery_enabled = true;
   bool auto_accept = false;
+  struct ManualDevice {
+    std::string ip;
+    int port = 53317;
+    bool https = false;
+    std::string alias;
+    std::string fingerprint;
+  };
+  std::vector<ManualDevice> manual_devices;
 };
 
 AppConfig default_config(PlatformKind platform);

@@ -118,6 +118,26 @@ Listen for UDP multicast announcements:
 ./build/localsend-desktop discover 1000
 ```
 
+Handheld config files can preload manual peers before the formal settings UI is
+finished. Add `manualDevices` entries to the platform config file:
+
+```json
+{
+  "manualDevices": [
+    {
+      "ip": "192.168.1.20",
+      "port": 53317,
+      "https": false,
+      "alias": "Matebook",
+      "fingerprint": ""
+    }
+  ]
+}
+```
+
+Entries with a fingerprint keep the stable LocalSend identity key; entries
+without one use `ip:port`.
+
 The prototype implements the v2 routes required for the HTTP MVP:
 
 - `GET /api/localsend/v2/info`

@@ -38,7 +38,9 @@ void sleep_for_interval(std::chrono::milliseconds duration) {
 } // namespace
 
 AppService::AppService(AppConfig config, AppServiceOptions options)
-    : config_(std::move(config)), options_(std::move(options)), self_(make_self_info()) {}
+    : config_(std::move(config)), options_(std::move(options)), self_(make_self_info()) {
+  load_configured_manual_devices();
+}
 
 AppService::~AppService() {
   wait_for_send_idle();
@@ -77,6 +79,8 @@ bool AppService::update_config(AppConfig config) {
 
   config_ = std::move(config);
   self_ = make_self_info();
+  devices_.clear();
+  load_configured_manual_devices();
   return true;
 }
 
@@ -318,6 +322,19 @@ InfoRegisterDto AppService::make_self_info() const {
   self.device_type = options_.device_type;
   self.download = false;
   return self;
+}
+
+void AppService::load_configured_manual_devices() {
+  for (const auto& manual : config_.manual_devices) {
+    Device device;
+    device.ip = manual.ip;
+    device.port = manual.port;
+    device.https = manual.https;
+    device.fingerprint = manual.fingerprint;
+    device.alias = manual.alias;
+    device.version = "2.1";
+    devices_.upsert_manual(std::move(device));
+  }
 }
 
 bool AppService::is_self_device(const Device& device) const {

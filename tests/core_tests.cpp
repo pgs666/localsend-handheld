@@ -602,6 +602,8 @@ void test_config_round_trip() {
   config.port = 12345;
   config.discovery_enabled = false;
   config.auto_accept = true;
+  config.manual_devices.push_back({"192.168.1.10", 53317, false, "Matebook", ""});
+  config.manual_devices.push_back({"192.168.1.11", 53318, true, "Phone", "phone-fingerprint"});
   localsend::save_config(config, path);
 
   const auto loaded = localsend::load_config(localsend::PlatformKind::Desktop, path);
@@ -613,6 +615,15 @@ void test_config_round_trip() {
   require(loaded.port == 12345, "config port round trip failed");
   require(!loaded.discovery_enabled, "config discovery round trip failed");
   require(loaded.auto_accept, "config auto accept round trip failed");
+  require(loaded.manual_devices.size() == 2, "config manual device count failed");
+  require(loaded.manual_devices[0].ip == "192.168.1.10", "config manual device ip failed");
+  require(loaded.manual_devices[0].port == 53317, "config manual device port failed");
+  require(!loaded.manual_devices[0].https, "config manual device protocol failed");
+  require(loaded.manual_devices[0].alias == "Matebook", "config manual device alias failed");
+  require(loaded.manual_devices[1].ip == "192.168.1.11", "config second manual device ip failed");
+  require(loaded.manual_devices[1].port == 53318, "config second manual device port failed");
+  require(loaded.manual_devices[1].https, "config second manual device protocol failed");
+  require(loaded.manual_devices[1].fingerprint == "phone-fingerprint", "config manual device fingerprint failed");
 
   std::filesystem::remove_all(dir);
 }
@@ -622,6 +633,7 @@ void test_app_service_status_and_manual_device() {
   config.alias = "Service";
   config.port = 0;
   config.discovery_enabled = false;
+  config.manual_devices.push_back({"192.168.1.30", 53317, true, "Configured", "configured-fingerprint"});
 
   localsend::AppServiceOptions options;
   options.platform = localsend::PlatformKind::Desktop;
@@ -638,16 +650,21 @@ void test_app_service_status_and_manual_device() {
   require(service.refresh_discovery(std::chrono::milliseconds(1)) == 0, "disabled discovery should not refresh");
   require(!service.start_discovery(std::chrono::milliseconds(10), std::chrono::milliseconds(1)), "disabled discovery loop should not start");
   require(!service.status().discovery_running, "disabled discovery loop should stay stopped");
+  require(status.device_count == 1, "service configured manual count failed");
+  const auto configured = service.devices().get("fingerprint:configured-fingerprint");
+  require(configured.has_value(), "service configured manual device missing");
+  require(configured->source == localsend::DeviceSource::Manual, "service configured manual source failed");
+  require(configured->device.https, "service configured manual protocol failed");
 
   const std::string key = service.add_manual_device("127.0.0.1", 53317, false, "Manual", "");
   require(key == "endpoint:127.0.0.1:53317", "service manual key failed");
   status = service.status();
-  require(status.device_count == 1, "service device count failed");
+  require(status.device_count == 2, "service device count failed");
   const auto snapshot = service.snapshot();
-  require(snapshot.status.device_count == 1, "service snapshot device count failed");
+  require(snapshot.status.device_count == 2, "service snapshot device count failed");
   require(snapshot.status.transfer_count == 0, "service snapshot transfer count failed");
   require(snapshot.self.alias == "Service", "service snapshot self alias failed");
-  require(snapshot.devices.size() == 1, "service snapshot devices failed");
+  require(snapshot.devices.size() == 2, "service snapshot devices failed");
   require(snapshot.transfers.empty(), "service snapshot transfers should be empty");
   const auto entry = service.devices().get(key);
   require(entry.has_value(), "service manual device missing");
@@ -695,11 +712,14 @@ void test_app_service_update_and_save_config() {
   updated.port = 0;
   updated.discovery_enabled = false;
   updated.auto_accept = true;
+  updated.manual_devices.push_back({"192.168.1.40", 53317, false, "Updated Manual", ""});
   require(service.update_config(updated), "service config update failed");
   require(service.config().alias == "After", "service config alias update failed");
   require(service.self_info().alias == "After", "service self alias update failed");
   require(service.self_info().port == 0, "service self port update failed");
   require(!service.config().discovery_enabled, "service discovery config update failed");
+  require(service.status().device_count == 1, "service config manual devices should load on update");
+  require(service.devices().get("endpoint:192.168.1.40:53317").has_value(), "service updated manual device missing");
   require(service.save_config(), "service config save failed");
 
   const auto loaded = localsend::load_config(localsend::PlatformKind::Desktop, updated.config_path);
@@ -707,6 +727,7 @@ void test_app_service_update_and_save_config() {
   require(loaded.port == 0, "service saved port failed");
   require(!loaded.discovery_enabled, "service saved discovery failed");
   require(loaded.auto_accept, "service saved auto accept failed");
+  require(loaded.manual_devices.size() == 1, "service saved manual device count failed");
 
   require(service.start_server(), "service config test server failed to start");
   auto rejected = updated;

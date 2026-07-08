@@ -462,6 +462,65 @@ void test_http_server_chunked_upload() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_incomplete_upload_removes_partial_file() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-incomplete-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Receiver";
+  self.protocol = localsend::ProtocolType::Http;
+
+  localsend::LocalSendServer server(self, dir);
+  require(server.start(0), "server failed to start for incomplete upload test");
+
+  localsend::PrepareUploadRequestDto request;
+  request.info.alias = "Sender";
+  request.info.port = 12345;
+  request.info.protocol = localsend::ProtocolType::Http;
+
+  localsend::FileDto file;
+  file.id = "partial-file";
+  file.file_name = "partial.txt";
+  file.size = 10;
+  file.file_type = "text/plain";
+  request.files.emplace(file.id, file);
+
+  const auto prepare = localsend::http_post("127.0.0.1", server.port(), localsend::kRoutePrepareUpload, localsend::to_json(request).dump());
+  require(prepare.status == 200, "prepare upload incomplete test failed");
+  const auto response = localsend::prepare_upload_response_from_json(localsend::Json::parse(prepare.body));
+  const std::string token = response.files.at(file.id);
+
+  const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(fd >= 0, "incomplete upload socket failed");
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = htons(static_cast<uint16_t>(server.port()));
+  require(::connect(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "incomplete upload connect failed");
+
+  const std::string path = std::string(localsend::kRouteUpload) + "?sessionId=" + response.session_id + "&fileId=" + file.id + "&token=" + token;
+  const std::string request_text =
+      "POST " + path + " HTTP/1.1\r\n"
+      "Host: 127.0.0.1:" + std::to_string(server.port()) + "\r\n"
+      "Connection: close\r\n"
+      "Content-Type: text/plain\r\n"
+      "Content-Length: 10\r\n\r\n"
+      "short";
+  require(::send(fd, request_text.data(), request_text.size(), 0) == static_cast<ssize_t>(request_text.size()), "incomplete upload send failed");
+  ::shutdown(fd, SHUT_WR);
+
+  char discard[1024];
+  while (::recv(fd, discard, sizeof(discard), 0) > 0) {
+  }
+  ::close(fd);
+
+  require(!std::filesystem::exists(dir / "partial.txt"), "incomplete upload should remove partial file");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
 void test_http_client_chunked_response() {
   const int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
   require(listen_fd >= 0, "chunked response listen socket failed");
@@ -528,6 +587,7 @@ int main() {
     test_http_send_to_v1_target();
     test_http_prepare_uses_file_id();
     test_http_server_chunked_upload();
+    test_http_incomplete_upload_removes_partial_file();
     test_http_client_chunked_response();
   } catch (const std::exception& e) {
     std::cerr << "test failed: " << e.what() << '\n';

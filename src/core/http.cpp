@@ -756,10 +756,16 @@ HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& re
     return text_response(500, "failed to open destination");
   }
 
+  auto failed_upload = [&](int status, const std::string& message) {
+    out.close();
+    std::filesystem::remove(destination);
+    return text_response(status, message);
+  };
+
   std::size_t written = 0;
   if (request.chunked) {
     if (!read_chunked_body_to_stream(client_fd, initial_body, out, written)) {
-      return text_response(400, "incomplete upload");
+      return failed_upload(400, "incomplete upload");
     }
   } else {
     if (!initial_body.empty()) {
@@ -773,7 +779,7 @@ HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& re
       const std::size_t chunk_size = std::min(buffer.size(), remaining);
       const ssize_t got = ::recv(client_fd, buffer.data(), chunk_size, 0);
       if (got <= 0) {
-        return text_response(400, "incomplete upload");
+        return failed_upload(400, "incomplete upload");
       }
       out.write(buffer.data(), static_cast<std::streamsize>(got));
       written += static_cast<std::size_t>(got);
@@ -781,14 +787,15 @@ HttpResponse LocalSendServer::handle_upload(int client_fd, const HttpRequest& re
   }
 
   if (written != request.content_length && !request.chunked) {
-    return text_response(400, "incomplete upload");
+    return failed_upload(400, "incomplete upload");
   }
   if (request.chunked && written != expected_size) {
-    return text_response(400, "file size mismatch");
+    return failed_upload(400, "file size mismatch");
   }
   if (!out) {
-    return text_response(500, "failed to write destination");
+    return failed_upload(500, "failed to write destination");
   }
+  out.close();
 
   {
     std::lock_guard<std::mutex> lock(sessions_mutex_);

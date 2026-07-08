@@ -1139,6 +1139,7 @@ void handle_upload(int fd, const std::string& target, const std::string& initial
   if (!complete || (!chunked && written != length)) {
     std::snprintf(g_status, sizeof(g_status), "Incomplete upload: %zu/%zu", written, length);
     append_log("upload incomplete path=" + path + " written=" + std::to_string(written) + " length=" + std::to_string(length));
+    std::remove(path.c_str());
     send_response(fd, 400, "text/plain", "incomplete upload");
     return;
   }

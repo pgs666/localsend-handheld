@@ -11,7 +11,11 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#if LOCALSEND_PLATFORM_PSV
+#include <pthread.h>
+#else
 #include <thread>
+#endif
 #include <vector>
 
 namespace localsend {
@@ -91,6 +95,9 @@ private:
   void accept_loop();
   void handle_client(int client_fd);
   HttpResponse route(const HttpRequest& request);
+#if LOCALSEND_PLATFORM_PSV
+  static void* accept_thread_entry(void* arg);
+#endif
 
   HttpResponse handle_info() const;
   HttpResponse handle_prepare_upload(const HttpRequest& request, bool v2);
@@ -104,7 +111,12 @@ private:
   int listen_fd_ = -1;
   int port_ = 0;
   std::atomic<bool> running_{false};
+#if LOCALSEND_PLATFORM_PSV
+  pthread_t accept_thread_{};
+  bool accept_thread_started_ = false;
+#else
   std::thread accept_thread_;
+#endif
   std::mutex sessions_mutex_;
   std::map<std::string, Session> sessions_;
 };

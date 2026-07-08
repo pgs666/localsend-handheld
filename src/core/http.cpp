@@ -14,6 +14,9 @@
 #include <memory>
 #include <netdb.h>
 #include <netinet/in.h>
+#if LOCALSEND_PLATFORM_PSV
+#include <pthread.h>
+#endif
 #include <random>
 #include <sstream>
 #include <sys/socket.h>
@@ -754,7 +757,17 @@ bool LocalSendServer::start(int requested_port) {
   }
 
   running_ = true;
+#if LOCALSEND_PLATFORM_PSV
+  if (::pthread_create(&accept_thread_, nullptr, &LocalSendServer::accept_thread_entry, this) != 0) {
+    running_ = false;
+    close_fd(listen_fd_);
+    listen_fd_ = -1;
+    return false;
+  }
+  accept_thread_started_ = true;
+#else
   accept_thread_ = std::thread(&LocalSendServer::accept_loop, this);
+#endif
   return true;
 }
 
@@ -766,9 +779,16 @@ void LocalSendServer::stop() {
   ::shutdown(listen_fd_, SHUT_RDWR);
   close_fd(listen_fd_);
   listen_fd_ = -1;
+#if LOCALSEND_PLATFORM_PSV
+  if (accept_thread_started_) {
+    ::pthread_join(accept_thread_, nullptr);
+    accept_thread_started_ = false;
+  }
+#else
   if (accept_thread_.joinable()) {
     accept_thread_.join();
   }
+#endif
 }
 
 void LocalSendServer::accept_loop() {
@@ -780,9 +800,20 @@ void LocalSendServer::accept_loop() {
       }
       break;
     }
+#if LOCALSEND_PLATFORM_PSV
+    handle_client(client);
+#else
     std::thread(&LocalSendServer::handle_client, this, client).detach();
+#endif
   }
 }
+
+#if LOCALSEND_PLATFORM_PSV
+void* LocalSendServer::accept_thread_entry(void* arg) {
+  static_cast<LocalSendServer*>(arg)->accept_loop();
+  return nullptr;
+}
+#endif
 
 void LocalSendServer::handle_client(int client_fd) {
   std::unique_ptr<HttpStream> stream;

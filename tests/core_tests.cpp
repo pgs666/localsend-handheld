@@ -589,19 +589,19 @@ void test_app_service_update_and_save_config() {
 
   auto updated = config;
   updated.alias = "After";
-  updated.port = 43210;
+  updated.port = 0;
   updated.discovery_enabled = false;
   updated.auto_accept = true;
   require(service.update_config(updated), "service config update failed");
   require(service.config().alias == "After", "service config alias update failed");
   require(service.self_info().alias == "After", "service self alias update failed");
-  require(service.self_info().port == 43210, "service self port update failed");
+  require(service.self_info().port == 0, "service self port update failed");
   require(!service.config().discovery_enabled, "service discovery config update failed");
   require(service.save_config(), "service config save failed");
 
   const auto loaded = localsend::load_config(localsend::PlatformKind::Desktop, updated.config_path);
   require(loaded.alias == "After", "service saved alias failed");
-  require(loaded.port == 43210, "service saved port failed");
+  require(loaded.port == 0, "service saved port failed");
   require(!loaded.discovery_enabled, "service saved discovery failed");
   require(loaded.auto_accept, "service saved auto accept failed");
 

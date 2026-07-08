@@ -16,6 +16,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_library(localsend_core
+  src/core/discovery.cpp
   src/core/http.cpp
   src/core/json.cpp
   src/core/protocol.cpp

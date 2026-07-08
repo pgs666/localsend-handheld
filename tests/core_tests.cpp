@@ -1,4 +1,5 @@
 #include "localsend/constants.hpp"
+#include "localsend/discovery.hpp"
 #include "localsend/http.hpp"
 #include "localsend/protocol.hpp"
 #include "localsend/safe_path.hpp"
@@ -66,6 +67,28 @@ void test_prepare_upload_response_dto() {
   const auto decoded = localsend::prepare_upload_response_from_json(localsend::Json::parse(localsend::to_json(response).dump()));
   require(decoded.session_id == "session", "prepare-upload response session decode failed");
   require(decoded.files.at("0") == "token", "prepare-upload response token decode failed");
+}
+
+void test_multicast_dto() {
+  localsend::MulticastDto dto;
+  dto.alias = "Switch";
+  dto.device_model = "Nintendo Switch";
+  dto.port = 53317;
+  dto.protocol = localsend::ProtocolType::Http;
+  dto.announce = true;
+
+  const auto payload = localsend::make_multicast_announcement(dto);
+  const auto device = localsend::device_from_multicast(payload, "192.168.1.50", 53317);
+  require(device.ip == "192.168.1.50", "multicast ip failed");
+  require(device.alias == "Switch", "multicast alias failed");
+  require(device.port == 53317, "multicast port failed");
+  require(!device.https, "multicast protocol failed");
+}
+
+void test_route_constants() {
+  require(std::string(localsend::kRouteInfo) == "/api/localsend/v2/info", "info route mismatch");
+  require(std::string(localsend::kRoutePrepareUpload) == "/api/localsend/v2/prepare-upload", "prepare route mismatch");
+  require(std::string(localsend::kDefaultMulticastGroup) == "224.0.0.167", "multicast group mismatch");
 }
 
 void test_safe_filename() {
@@ -141,6 +164,8 @@ int main() {
     test_info_dto();
     test_prepare_upload_dto();
     test_prepare_upload_response_dto();
+    test_multicast_dto();
+    test_route_constants();
     test_safe_filename();
     test_unique_destination();
     test_http_server_routes_and_upload();

@@ -75,7 +75,7 @@ target_link_libraries(localsend-core-psv PUBLIC
 
 add_executable(localsend-core-psv-smoke
   src/core_smoke.cpp
-  src/core_smoke_compat.cpp
+  src/psv_compat.cpp
 )
 
 set_target_properties(localsend-core-psv-smoke PROPERTIES
@@ -89,6 +89,7 @@ target_link_libraries(localsend-core-psv-smoke PRIVATE
 
 add_executable(localsend-handheld-psv
   src/main.cpp
+  src/psv_compat.cpp
 )
 
 set_target_properties(localsend-handheld-psv PROPERTIES
@@ -108,6 +109,8 @@ target_compile_options(localsend-handheld-psv PRIVATE
 
 target_link_libraries(localsend-handheld-psv PRIVATE
   borealis
+  localsend-core-psv
+  SceNet
 )
 
 vita_create_self(localsend-handheld-psv.self localsend-handheld-psv UNSAFE NOASLR)

@@ -619,6 +619,46 @@ void test_app_service_update_and_save_config() {
   std::filesystem::remove_all(dir);
 }
 
+void test_app_service_register_updates_devices() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-service-register-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  auto config = localsend::default_config(localsend::PlatformKind::Desktop);
+  config.alias = "Register Receiver";
+  config.port = 0;
+  config.inbox_path = dir / "inbox";
+  config.discovery_enabled = true;
+
+  localsend::AppServiceOptions options;
+  options.enable_tls = false;
+  localsend::AppService service(config, options);
+  require(service.start_server(), "service register test server failed to start");
+
+  localsend::InfoRegisterDto peer;
+  peer.alias = "Register Peer";
+  peer.version = localsend::kProtocolVersion;
+  peer.port = 4567;
+  peer.protocol = localsend::ProtocolType::Http;
+  peer.fingerprint = "register-peer";
+  peer.device_model = "MateBook";
+
+  const auto response = localsend::http_post("127.0.0.1",
+                                             service.status().port,
+                                             localsend::kRouteRegister,
+                                             localsend::to_json(peer).dump());
+  require(response.status == 200, "service register request failed");
+  const auto snapshot = service.snapshot();
+  require(snapshot.devices.size() == 1, "service register should add device");
+  require(snapshot.devices[0].device.alias == "Register Peer", "service register device alias failed");
+  require(snapshot.devices[0].device.ip == "127.0.0.1", "service register device ip failed");
+  require(snapshot.devices[0].device.port == 4567, "service register device port failed");
+  require(snapshot.devices[0].device.fingerprint == "register-peer", "service register device fingerprint failed");
+
+  service.stop_server();
+  std::filesystem::remove_all(dir);
+}
+
 void test_app_service_send_to_manual_device() {
   const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-service-tests";
   const auto inbox = dir / "inbox";
@@ -816,6 +856,65 @@ void test_http_server_routes_and_upload() {
   std::ifstream in(received, std::ios::binary);
   std::vector<char> actual((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   require(actual == expected, "uploaded file content mismatch");
+
+  server.stop();
+  std::filesystem::remove_all(dir);
+}
+
+void test_http_info_and_register_discovery_semantics() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-register-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+
+  localsend::InfoRegisterDto self;
+  self.alias = "Receiver";
+  self.port = 0;
+  self.protocol = localsend::ProtocolType::Http;
+  self.fingerprint = "receiver-fingerprint";
+
+  localsend::LocalSendServer server(self, dir);
+  localsend::Device registered;
+  server.set_register_callback([&registered](localsend::Device device) {
+    registered = std::move(device);
+  });
+  require(server.start(0), "server failed to start for register test");
+
+  const auto self_info = localsend::http_get("127.0.0.1",
+                                             server.port(),
+                                             std::string(localsend::kRouteInfoV1) + "?fingerprint=receiver-fingerprint");
+  require(self_info.status == 412, "info should reject self fingerprint");
+
+  localsend::InfoRegisterDto peer;
+  peer.alias = "Peer";
+  peer.version = localsend::kProtocolVersion;
+  peer.port = 53317;
+  peer.protocol = localsend::ProtocolType::Https;
+  peer.fingerprint = "peer-fingerprint";
+  peer.device_model = "Phone";
+  peer.device_type = localsend::DeviceType::Mobile;
+  peer.download = true;
+
+  const auto registered_response = localsend::http_post("127.0.0.1",
+                                                        server.port(),
+                                                        localsend::kRouteRegister,
+                                                        localsend::to_json(peer).dump());
+  require(registered_response.status == 200, "register route failed");
+  const auto response_info = localsend::info_from_json(localsend::Json::parse(registered_response.body));
+  require(response_info.alias == "Receiver", "register response should return local info");
+  require(registered.alias == "Peer", "register callback alias failed");
+  require(registered.ip == "127.0.0.1", "register callback ip failed");
+  require(registered.port == 53317, "register callback port failed");
+  require(registered.https, "register callback protocol failed");
+  require(registered.fingerprint == "peer-fingerprint", "register callback fingerprint failed");
+  require(registered.device_type == localsend::DeviceType::Mobile, "register callback device type failed");
+  require(registered.download, "register callback download flag failed");
+
+  peer.fingerprint = "receiver-fingerprint";
+  const auto self_register = localsend::http_post("127.0.0.1",
+                                                  server.port(),
+                                                  localsend::kRouteRegister,
+                                                  localsend::to_json(peer).dump());
+  require(self_register.status == 412, "register should reject self fingerprint");
 
   server.stop();
   std::filesystem::remove_all(dir);
@@ -1252,6 +1351,149 @@ void test_http_incomplete_upload_removes_partial_file() {
   std::filesystem::remove_all(dir);
 }
 
+void test_http_send_accepts_prepare_no_content() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-send-204-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const auto source = dir / "skip.txt";
+  {
+    std::ofstream out(source, std::ios::binary);
+    out << "skip me";
+  }
+
+  const int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(listen_fd >= 0, "204 listen socket failed");
+  int enabled = 1;
+  ::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  require(::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "204 bind failed");
+  require(::listen(listen_fd, 1) == 0, "204 listen failed");
+  socklen_t len = sizeof(addr);
+  require(::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0, "204 getsockname failed");
+  const int port = ntohs(addr.sin_port);
+
+  std::thread server([listen_fd]() {
+    const int client = ::accept(listen_fd, nullptr, nullptr);
+    if (client >= 0) {
+      char discard[4096];
+      static_cast<void>(::recv(client, discard, sizeof(discard), 0));
+      const char* response =
+          "HTTP/1.1 204 No Content\r\n"
+          "Content-Length: 0\r\n"
+          "Connection: close\r\n\r\n";
+      static_cast<void>(::send(client, response, std::strlen(response), 0));
+      ::close(client);
+    }
+    ::close(listen_fd);
+  });
+
+  localsend::Device target;
+  target.ip = "127.0.0.1";
+  target.port = port;
+  target.version = localsend::kProtocolVersion;
+  target.https = false;
+
+  localsend::InfoRegisterDto sender;
+  sender.alias = "Sender";
+  sender.port = 12345;
+  sender.protocol = localsend::ProtocolType::Http;
+
+  localsend::TransferStore transfers;
+  require(localsend::send_files_http(target, {source}, sender, &transfers), "204 prepare should be accepted");
+  server.join();
+  const auto snapshot = transfers.snapshot();
+  require(snapshot.size() == 1, "204 transfer count failed");
+  require(snapshot[0].status == localsend::TransferStatus::Completed, "204 transfer should be terminal");
+
+  std::filesystem::remove_all(dir);
+}
+
+void test_http_send_treats_missing_tokens_as_skipped() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-send-skipped-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir);
+  const auto first = dir / "accepted.txt";
+  const auto second = dir / "skipped.txt";
+  {
+    std::ofstream out(first, std::ios::binary);
+    out << "accepted";
+  }
+  {
+    std::ofstream out(second, std::ios::binary);
+    out << "skipped";
+  }
+
+  const int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+  require(listen_fd >= 0, "skipped listen socket failed");
+  int enabled = 1;
+  ::setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &enabled, sizeof(enabled));
+  sockaddr_in addr{};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  addr.sin_port = 0;
+  require(::bind(listen_fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0, "skipped bind failed");
+  require(::listen(listen_fd, 2) == 0, "skipped listen failed");
+  socklen_t len = sizeof(addr);
+  require(::getsockname(listen_fd, reinterpret_cast<sockaddr*>(&addr), &len) == 0, "skipped getsockname failed");
+  const int port = ntohs(addr.sin_port);
+
+  std::thread server([listen_fd]() {
+    int client = ::accept(listen_fd, nullptr, nullptr);
+    if (client >= 0) {
+      char discard[4096];
+      static_cast<void>(::recv(client, discard, sizeof(discard), 0));
+      const char* body = R"({"sessionId":"session","files":{"0":"token"}})";
+      std::ostringstream response;
+      response << "HTTP/1.1 200 OK\r\n"
+               << "Content-Type: application/json\r\n"
+               << "Content-Length: " << std::strlen(body) << "\r\n"
+               << "Connection: close\r\n\r\n"
+               << body;
+      const std::string text = response.str();
+      static_cast<void>(::send(client, text.data(), text.size(), 0));
+      ::close(client);
+    }
+
+    client = ::accept(listen_fd, nullptr, nullptr);
+    if (client >= 0) {
+      char discard[4096];
+      static_cast<void>(::recv(client, discard, sizeof(discard), 0));
+      const char* response =
+          "HTTP/1.1 200 OK\r\n"
+          "Content-Type: application/json\r\n"
+          "Content-Length: 2\r\n"
+          "Connection: close\r\n\r\n{}";
+      static_cast<void>(::send(client, response, std::strlen(response), 0));
+      ::close(client);
+    }
+    ::close(listen_fd);
+  });
+
+  localsend::Device target;
+  target.ip = "127.0.0.1";
+  target.port = port;
+  target.version = localsend::kProtocolVersion;
+  target.https = false;
+
+  localsend::InfoRegisterDto sender;
+  sender.alias = "Sender";
+  sender.port = 12345;
+  sender.protocol = localsend::ProtocolType::Http;
+
+  localsend::TransferStore transfers;
+  require(localsend::send_files_http(target, {first, second}, sender, &transfers), "missing token should be treated as skipped");
+  server.join();
+  const auto snapshot = transfers.snapshot();
+  require(snapshot.size() == 2, "skipped transfer count failed");
+  require(snapshot[0].status == localsend::TransferStatus::Completed, "accepted transfer should complete");
+  require(snapshot[1].status == localsend::TransferStatus::Completed, "skipped transfer should be terminal");
+
+  std::filesystem::remove_all(dir);
+}
+
 void test_http_client_chunked_response() {
   const int listen_fd = ::socket(AF_INET, SOCK_STREAM, 0);
   require(listen_fd >= 0, "chunked response listen socket failed");
@@ -1320,12 +1562,14 @@ int main() {
     test_app_service_status_and_manual_device();
     test_app_service_discovery_loop_lifecycle();
     test_app_service_update_and_save_config();
+    test_app_service_register_updates_devices();
     test_app_service_send_to_manual_device();
     test_app_service_async_send_to_manual_device();
     test_safe_filename();
     test_unique_destination();
     test_file_browser_listing();
     test_http_server_routes_and_upload();
+    test_http_info_and_register_discovery_semantics();
     test_https_server_routes_and_upload();
     test_http_send_multiple_files();
     test_http_transfer_store_updates();
@@ -1335,6 +1579,8 @@ int main() {
     test_http_prepare_uses_file_id();
     test_http_server_chunked_upload();
     test_http_incomplete_upload_removes_partial_file();
+    test_http_send_accepts_prepare_no_content();
+    test_http_send_treats_missing_tokens_as_skipped();
     test_http_client_chunked_response();
   } catch (const std::exception& e) {
     std::cerr << "test failed: " << e.what() << '\n';

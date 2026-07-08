@@ -274,6 +274,20 @@ bool route_is(const HttpRequest& request, const char* path) {
   return request.path == path;
 }
 
+Device device_from_info_register(const InfoRegisterDto& dto, const std::string& ip, int fallback_port, bool fallback_https) {
+  Device device;
+  device.ip = ip;
+  device.version = dto.version.empty() ? kProtocolVersion : dto.version;
+  device.port = dto.port > 0 ? dto.port : fallback_port;
+  device.https = dto.protocol == ProtocolType::Https || (dto.port <= 0 && fallback_https);
+  device.fingerprint = dto.fingerprint;
+  device.alias = dto.alias;
+  device.device_model = dto.device_model;
+  device.device_type = dto.device_type;
+  device.download = dto.download;
+  return device;
+}
+
 bool read_body(HttpStream& stream, std::string& buffer, std::size_t header_end, std::size_t length, std::string& body) {
   body = buffer.substr(header_end);
   while (body.size() < length) {
@@ -828,27 +842,41 @@ void LocalSendServer::poll_once() {
     return;
   }
 
-  const int client = ::accept(listen_fd_, nullptr, nullptr);
+  sockaddr_in sender{};
+  socklen_t sender_len = sizeof(sender);
+  const int client = ::accept(listen_fd_, reinterpret_cast<sockaddr*>(&sender), &sender_len);
   if (client >= 0) {
+    std::string remote_ip;
+    char ip[INET_ADDRSTRLEN] = {};
+    if (sender.sin_family == AF_INET && ::inet_ntop(AF_INET, &sender.sin_addr, ip, sizeof(ip))) {
+      remote_ip = ip;
+    }
     set_fd_blocking(client, true);
-    handle_client(client);
+    handle_client(client, std::move(remote_ip));
   }
 #endif
 }
 
 void LocalSendServer::accept_loop() {
   while (running_) {
-    const int client = ::accept(listen_fd_, nullptr, nullptr);
+    sockaddr_in sender{};
+    socklen_t sender_len = sizeof(sender);
+    const int client = ::accept(listen_fd_, reinterpret_cast<sockaddr*>(&sender), &sender_len);
     if (client < 0) {
       if (running_) {
         continue;
       }
       break;
     }
+    std::string remote_ip;
+    char ip[INET_ADDRSTRLEN] = {};
+    if (sender.sin_family == AF_INET && ::inet_ntop(AF_INET, &sender.sin_addr, ip, sizeof(ip))) {
+      remote_ip = ip;
+    }
 #if LOCALSEND_PLATFORM_PSV
-    handle_client(client);
+    handle_client(client, std::move(remote_ip));
 #else
-    std::thread(&LocalSendServer::handle_client, this, client).detach();
+    std::thread(&LocalSendServer::handle_client, this, client, std::move(remote_ip)).detach();
 #endif
   }
 }
@@ -860,7 +888,12 @@ void* LocalSendServer::accept_thread_entry(void* arg) {
 }
 #endif
 
-void LocalSendServer::handle_client(int client_fd) {
+void LocalSendServer::set_register_callback(std::function<void(Device)> callback) {
+  std::lock_guard<std::mutex> lock(register_callback_mutex_);
+  register_callback_ = std::move(callback);
+}
+
+void LocalSendServer::handle_client(int client_fd, std::string remote_ip) {
   std::unique_ptr<HttpStream> stream;
   if (tls_credentials_) {
 #if LOCALSEND_HAS_MBEDTLS
@@ -893,7 +926,7 @@ void LocalSendServer::handle_client(int client_fd) {
   } else if (!read_remaining_body(*stream, initial_body, request.content_length, request.body)) {
     response = text_response(400, "bad request body");
   } else {
-    response = route(request);
+    response = route(request, remote_ip);
   }
 
   std::ostringstream out;
@@ -907,12 +940,12 @@ void LocalSendServer::handle_client(int client_fd) {
   stream->close_notify();
 }
 
-HttpResponse LocalSendServer::route(const HttpRequest& request) {
+HttpResponse LocalSendServer::route(const HttpRequest& request, const std::string& remote_ip) {
   if (request.method == "GET" && (route_is(request, kRouteInfo) || route_is(request, kRouteInfoV1))) {
-    return handle_info();
+    return handle_info(request);
   }
   if (request.method == "POST" && (route_is(request, kRouteRegister) || route_is(request, kRouteRegisterV1))) {
-    return handle_info();
+    return handle_register(request, remote_ip);
   }
   if (request.method == "POST" && (route_is(request, kRoutePrepareUpload) || route_is(request, kRoutePrepareUploadV1))) {
     return handle_prepare_upload(request, route_is(request, kRoutePrepareUpload));
@@ -926,8 +959,36 @@ HttpResponse LocalSendServer::route(const HttpRequest& request) {
   return text_response(404, "not found");
 }
 
-HttpResponse LocalSendServer::handle_info() const {
+HttpResponse LocalSendServer::handle_info(const HttpRequest& request) const {
+  const auto fingerprint = request.query.find("fingerprint");
+  if (fingerprint != request.query.end() && !self_.fingerprint.empty() && fingerprint->second == self_.fingerprint) {
+    return text_response(412, "Self-discovered");
+  }
   return json_response(200, to_json(self_));
+}
+
+HttpResponse LocalSendServer::handle_register(const HttpRequest& request, const std::string& remote_ip) {
+  InfoRegisterDto dto;
+  try {
+    dto = info_register_from_json(Json::parse(request.body));
+  } catch (const std::exception&) {
+    return text_response(400, "Request body malformed");
+  }
+
+  if (!self_.fingerprint.empty() && dto.fingerprint == self_.fingerprint) {
+    return text_response(412, "Self-discovered");
+  }
+
+  std::function<void(Device)> callback;
+  {
+    std::lock_guard<std::mutex> lock(register_callback_mutex_);
+    callback = register_callback_;
+  }
+  if (callback && !remote_ip.empty()) {
+    callback(device_from_info_register(dto, remote_ip, self_.port, self_.protocol == ProtocolType::Https));
+  }
+
+  return json_response(200, to_json(static_cast<const InfoDto&>(self_)));
 }
 
 HttpResponse LocalSendServer::handle_prepare_upload(const HttpRequest& request, bool v2) {
@@ -1165,6 +1226,16 @@ bool send_files_http(const Device& target,
                                           target.https,
                                           target.fingerprint);
   debug_send_line("prepare status=" + std::to_string(prepared.status) + " body=" + prepared.body);
+  if (prepared.status == 204) {
+    if (transfers) {
+      for (const std::uint64_t transfer_id : transfer_ids) {
+        if (transfer_id != 0) {
+          transfers->set_status(transfer_id, TransferStatus::Completed);
+        }
+      }
+    }
+    return true;
+  }
   if (prepared.status != 200) {
     if (transfers) {
       for (const std::uint64_t transfer_id : transfer_ids) {
@@ -1205,9 +1276,8 @@ bool send_files_http(const Device& target,
     const auto token = response.files.find(file.id);
     if (token == response.files.end()) {
       if (transfers && transfer_id != 0) {
-        transfers->fail(transfer_id, "missing upload token");
+        transfers->set_status(transfer_id, TransferStatus::Completed);
       }
-      all_uploaded = false;
       continue;
     }
 

@@ -126,6 +126,11 @@ bool AppService::start_server() {
     return false;
   }
   self_.port = server_->port();
+  server_->set_register_callback([this](Device device) {
+    if (!is_self_device(device)) {
+      devices_.upsert_discovered(std::move(device));
+    }
+  });
   return true;
 }
 
@@ -306,9 +311,20 @@ bool AppService::is_self_device(const Device& device) const {
 void AppService::discovery_loop(std::chrono::milliseconds interval, std::chrono::milliseconds scan_timeout) {
   const auto bounded_interval = std::max(interval, std::chrono::milliseconds(50));
   const auto bounded_timeout = std::max(scan_timeout, std::chrono::milliseconds(1));
+  const std::chrono::milliseconds burst_delays[] = {
+      std::chrono::milliseconds(100),
+      std::chrono::milliseconds(500),
+      std::chrono::milliseconds(2000),
+  };
 
   while (discovery_running_) {
-    announce_once();
+    for (const auto delay : burst_delays) {
+      sleep_for_interval(delay);
+      if (!discovery_running_) {
+        return;
+      }
+      announce_once();
+    }
     refresh_discovery(bounded_timeout);
 
     const auto sleep_step = std::chrono::milliseconds(50);

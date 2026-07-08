@@ -77,6 +77,7 @@ public:
   void stop();
   void poll_once();
   int port() const { return port_; }
+  void set_register_callback(std::function<void(Device)> callback);
 
 private:
   struct PendingFile {
@@ -94,13 +95,14 @@ private:
   };
 
   void accept_loop();
-  void handle_client(int client_fd);
-  HttpResponse route(const HttpRequest& request);
+  void handle_client(int client_fd, std::string remote_ip);
+  HttpResponse route(const HttpRequest& request, const std::string& remote_ip);
 #if LOCALSEND_PLATFORM_PSV
   static void* accept_thread_entry(void* arg);
 #endif
 
-  HttpResponse handle_info() const;
+  HttpResponse handle_info(const HttpRequest& request) const;
+  HttpResponse handle_register(const HttpRequest& request, const std::string& remote_ip);
   HttpResponse handle_prepare_upload(const HttpRequest& request, bool v2);
   HttpResponse handle_upload(HttpStream& stream, const HttpRequest& request, const std::string& initial_body, bool v2);
   HttpResponse handle_cancel(const HttpRequest& request);
@@ -120,6 +122,8 @@ private:
 #endif
   std::mutex sessions_mutex_;
   std::map<std::string, Session> sessions_;
+  std::mutex register_callback_mutex_;
+  std::function<void(Device)> register_callback_;
 };
 
 bool send_single_file_http(const Device& target, const std::filesystem::path& file_path, const InfoRegisterDto& self);

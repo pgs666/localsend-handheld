@@ -19,6 +19,7 @@ constexpr int kPort = 53317;
 constexpr int kBufferSize = 64 * 1024;
 constexpr int kMaxFiles = 16;
 constexpr const char* kInbox = "sdmc:/switch/localsend/inbox";
+// Temporary protocol bring-up path. Remove after borealis device picker and file browser land.
 constexpr const char* kOutbox = "sdmc:/switch/localsend/outbox";
 constexpr const char* kTargetPath = "sdmc:/switch/localsend/target.txt";
 constexpr const char* kDefaultSendTargetIp = "192.168.31.150";
@@ -740,6 +741,7 @@ bool extract_prepare_response(const std::string& body, std::string& session_id, 
 }
 
 void send_outbox_file() {
+  // TODO: Replace this manual outbox sender with the real borealis send flow.
   std::string ip;
   int port = kPort;
   if (!read_send_target(ip, port)) {

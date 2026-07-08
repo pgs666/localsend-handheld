@@ -355,12 +355,37 @@ bool send_all(int fd, const char* data, size_t size) {
   while (size > 0) {
     const ssize_t sent = send(fd, data, size, 0);
     if (sent <= 0) {
+      if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+        svcSleepThread(1'000'000);
+        continue;
+      }
       return false;
     }
     data += sent;
     size -= static_cast<size_t>(sent);
   }
   return true;
+}
+
+void set_blocking(int fd) {
+  const int flags = fcntl(fd, F_GETFL, 0);
+  if (flags >= 0) {
+    fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+  }
+}
+
+ssize_t recv_retry(int fd, char* buffer, size_t size) {
+  while (true) {
+    const ssize_t got = recv(fd, buffer, size, 0);
+    if (got >= 0) {
+      return got;
+    }
+    if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+      svcSleepThread(1'000'000);
+      continue;
+    }
+    return got;
+  }
 }
 
 void send_response(int fd, int status, const char* content_type, const std::string& body) {
@@ -380,7 +405,7 @@ void send_response(int fd, int status, const char* content_type, const std::stri
 bool read_headers(int fd, std::string& request, std::string& initial_body) {
   char chunk[4096];
   while (request.find("\r\n\r\n") == std::string::npos && request.size() < 1024 * 1024) {
-    const ssize_t got = recv(fd, chunk, sizeof(chunk), 0);
+    const ssize_t got = recv_retry(fd, chunk, sizeof(chunk));
     if (got <= 0) {
       return false;
     }
@@ -414,10 +439,25 @@ size_t content_length(const std::string& headers) {
   return static_cast<size_t>(std::strtoull(headers.c_str() + pos, nullptr, 10));
 }
 
+bool transfer_encoding_chunked(const std::string& headers) {
+  std::string lower = headers;
+  for (char& c : lower) {
+    if (c >= 'A' && c <= 'Z') {
+      c = static_cast<char>(c - 'A' + 'a');
+    }
+  }
+  const size_t pos = lower.find("transfer-encoding:");
+  if (pos == std::string::npos) {
+    return false;
+  }
+  const size_t line_end = lower.find("\r\n", pos);
+  return lower.substr(pos, line_end == std::string::npos ? std::string::npos : line_end - pos).find("chunked") != std::string::npos;
+}
+
 std::string read_body_string(int fd, std::string body, size_t length) {
   char chunk[4096];
   while (body.size() < length) {
-    const ssize_t got = recv(fd, chunk, sizeof(chunk), 0);
+    const ssize_t got = recv_retry(fd, chunk, sizeof(chunk));
     if (got <= 0) {
       break;
     }
@@ -427,6 +467,74 @@ std::string read_body_string(int fd, std::string body, size_t length) {
     body.resize(length);
   }
   return body;
+}
+
+bool fill_stream_buffer(int fd, std::string& buffer, size_t pos, size_t need) {
+  char chunk[4096];
+  while (buffer.size() - pos < need) {
+    const ssize_t got = recv_retry(fd, chunk, sizeof(chunk));
+    if (got <= 0) {
+      return false;
+    }
+    buffer.append(chunk, static_cast<size_t>(got));
+  }
+  return true;
+}
+
+bool read_chunked_body_to_file(int fd, const std::string& initial_body, FILE* out, size_t& written) {
+  std::string buffer = initial_body;
+  size_t pos = 0;
+  written = 0;
+
+  while (true) {
+    size_t line_end = buffer.find("\r\n", pos);
+    while (line_end == std::string::npos) {
+      if (!fill_stream_buffer(fd, buffer, pos, buffer.size() - pos + 1)) {
+        return false;
+      }
+      line_end = buffer.find("\r\n", pos);
+    }
+
+    std::string size_text = buffer.substr(pos, line_end - pos);
+    const size_t semicolon = size_text.find(';');
+    if (semicolon != std::string::npos) {
+      size_text.resize(semicolon);
+    }
+    const size_t chunk_size = static_cast<size_t>(std::strtoull(size_text.c_str(), nullptr, 16));
+    pos = line_end + 2;
+
+    if (chunk_size == 0) {
+      while (true) {
+        line_end = buffer.find("\r\n", pos);
+        while (line_end == std::string::npos) {
+          if (!fill_stream_buffer(fd, buffer, pos, buffer.size() - pos + 1)) {
+            return false;
+          }
+          line_end = buffer.find("\r\n", pos);
+        }
+        if (line_end == pos) {
+          return true;
+        }
+        pos = line_end + 2;
+      }
+    }
+
+    if (!fill_stream_buffer(fd, buffer, pos, chunk_size + 2)) {
+      return false;
+    }
+    std::fwrite(buffer.data() + pos, 1, chunk_size, out);
+    written += chunk_size;
+    pos += chunk_size;
+    if (pos + 1 >= buffer.size() || buffer[pos] != '\r' || buffer[pos + 1] != '\n') {
+      return false;
+    }
+    pos += 2;
+
+    if (pos > 64 * 1024) {
+      buffer.erase(0, pos);
+      pos = 0;
+    }
+  }
 }
 
 std::string first_target(const std::string& request) {
@@ -562,11 +670,11 @@ void handle_prepare_upload(int fd, const std::string& body) {
   send_response(fd, 200, "application/json", response);
 }
 
-void handle_upload(int fd, const std::string& target, const std::string& initial_body, size_t length) {
+void handle_upload(int fd, const std::string& target, const std::string& initial_body, size_t length, bool chunked) {
   PendingFile* selected = nullptr;
   const std::string file_id = query_value(target, "fileId");
   const std::string token = query_value(target, "token");
-  append_log("upload query fileId=" + file_id + " token=" + token + " length=" + std::to_string(length));
+  append_log("upload query fileId=" + file_id + " token=" + token + " length=" + std::to_string(length) + " chunked=" + std::to_string(chunked));
   for (int i = 0; i < g_session.file_count; ++i) {
     if (g_session.files[i].active && (g_session.files[i].file_id == file_id || g_session.files[i].map_key == file_id || std::to_string(i) == file_id) &&
         g_session.files[i].token == token) {
@@ -592,27 +700,33 @@ void handle_upload(int fd, const std::string& target, const std::string& initial
   }
 
   size_t written = 0;
-  if (!initial_body.empty()) {
-    const size_t count = initial_body.size() > length ? length : initial_body.size();
-    std::fwrite(initial_body.data(), 1, count, out);
-    written += count;
-  }
-
-  char* buffer = static_cast<char*>(std::malloc(kBufferSize));
-  while (written < length) {
-    const size_t remaining = length - written;
-    const size_t want = remaining > kBufferSize ? kBufferSize : remaining;
-    const ssize_t got = recv(fd, buffer, want, 0);
-    if (got <= 0) {
-      break;
+  bool complete = true;
+  if (chunked) {
+    complete = read_chunked_body_to_file(fd, initial_body, out, written);
+  } else {
+    if (!initial_body.empty()) {
+      const size_t count = initial_body.size() > length ? length : initial_body.size();
+      std::fwrite(initial_body.data(), 1, count, out);
+      written += count;
     }
-    std::fwrite(buffer, 1, static_cast<size_t>(got), out);
-    written += static_cast<size_t>(got);
+
+    char* buffer = static_cast<char*>(std::malloc(kBufferSize));
+    while (written < length) {
+      const size_t remaining = length - written;
+      const size_t want = remaining > kBufferSize ? kBufferSize : remaining;
+      const ssize_t got = recv_retry(fd, buffer, want);
+      if (got <= 0) {
+        complete = false;
+        break;
+      }
+      std::fwrite(buffer, 1, static_cast<size_t>(got), out);
+      written += static_cast<size_t>(got);
+    }
+    std::free(buffer);
   }
-  std::free(buffer);
   std::fclose(out);
 
-  if (written != length) {
+  if (!complete || (!chunked && written != length)) {
     std::snprintf(g_status, sizeof(g_status), "Incomplete upload: %zu/%zu", written, length);
     append_log("upload incomplete path=" + path + " written=" + std::to_string(written) + " length=" + std::to_string(length));
     send_response(fd, 400, "text/plain", "incomplete upload");
@@ -628,7 +742,7 @@ void handle_upload(int fd, const std::string& target, const std::string& initial
   g_session.active = any_active;
   std::snprintf(g_status, sizeof(g_status), "Received: %s (%zu bytes)", selected->file_name.c_str(), written);
   append_log("upload ok path=" + path + " bytes=" + std::to_string(written));
-  send_response(fd, 200, "text/plain", "ok");
+  send_response(fd, 200, "application/json", "{}");
 }
 
 void handle_cancel(int fd) {
@@ -647,6 +761,7 @@ void handle_client(int fd) {
 
   const std::string target = first_target(request);
   const size_t length = content_length(request);
+  const bool chunked = transfer_encoding_chunked(request);
 
   if (first_method_is(request, "GET") && starts_with(target, "/api/localsend/v2/info")) {
     handle_info(fd);
@@ -657,7 +772,7 @@ void handle_client(int fd) {
   } else if (first_method_is(request, "POST") && starts_with(target, "/api/localsend/v2/prepare-upload")) {
     handle_prepare_upload(fd, read_body_string(fd, initial_body, length));
   } else if (first_method_is(request, "POST") && starts_with(target, "/api/localsend/v2/upload")) {
-    handle_upload(fd, target, initial_body, length);
+    handle_upload(fd, target, initial_body, length, chunked);
   } else if (first_method_is(request, "POST") && starts_with(target, "/api/localsend/v2/cancel")) {
     handle_cancel(fd);
   } else {
@@ -785,6 +900,7 @@ int main(int argc, char* argv[]) {
     if (server >= 0) {
       const int client = accept(server, nullptr, nullptr);
       if (client >= 0) {
+        set_blocking(client);
         std::snprintf(g_status, sizeof(g_status), "Handling request");
         draw_status();
         handle_client(client);

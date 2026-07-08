@@ -16,6 +16,7 @@ int main(int argc, char* argv[]) {
   config.device_type = localsend::DeviceType::Mobile;
   config.renderer = "borealis GXM";
   config.inbox_path = "ux0:data/localsend/inbox/";
+  config.outbox_path = "ux0:data/localsend/outbox/";
   config.config_path = "ux0:data/localsend/config.json";
   config.log_path = "ux0:data/localsend-borealis.log";
   config.port = 53317;

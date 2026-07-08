@@ -4,14 +4,16 @@ Current targets:
 
 - `desktop`: POSIX sockets, std threads, filesystem paths, protocol tests.
 - `switch`: libnx console `.nro` with HTTP/HTTPS receive MVP, HTTPS send bring-up path, UDP announcements, and inbox at `sdmc:/switch/localsend/inbox/`.
-- `psv`: VitaSDK borealis/GXM `.vpk` with HTTP receive, periodic discovery announce, and inbox at `ux0:data/localsend/inbox/`. The portable send and HTTPS core compile for PSV; user-driven send UI and runtime HTTPS enablement are still pending.
+- `psv`: VitaSDK borealis/GXM `.vpk` with HTTP receive, periodic discovery announce, inbox at `ux0:data/localsend/inbox/`, and outbox at `ux0:data/localsend/outbox/`. The portable send and HTTPS core compile for PSV; user-driven send UI and runtime HTTPS enablement are still pending.
 
 Planned handheld paths:
 
 - Switch config: `sdmc:/switch/localsend/config.json`
 - Switch inbox: `sdmc:/switch/localsend/inbox/`
+- Switch outbox: `sdmc:/switch/localsend/outbox/`
 - PSV config: `ux0:data/localsend/config.json`
 - PSV inbox: `ux0:data/localsend/inbox/`
+- PSV outbox: `ux0:data/localsend/outbox/`
 
 The portable core protocol code stays free of borealis/libnx/VitaSDK includes.
 

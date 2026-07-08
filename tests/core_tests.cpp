@@ -523,12 +523,14 @@ void test_route_constants() {
 void test_default_config_paths() {
   const auto switch_config = localsend::default_config(localsend::PlatformKind::Switch);
   require(switch_config.inbox_path.string() == "sdmc:/switch/localsend/inbox/", "switch inbox path mismatch");
+  require(switch_config.outbox_path.string() == "sdmc:/switch/localsend/outbox/", "switch outbox path mismatch");
   require(switch_config.config_path.string() == "sdmc:/switch/localsend/config.json", "switch config path mismatch");
   require(switch_config.certificate_path.string() == "sdmc:/switch/localsend/cert.pem", "switch certificate path mismatch");
   require(switch_config.private_key_path.string() == "sdmc:/switch/localsend/key.pem", "switch private key path mismatch");
 
   const auto psv_config = localsend::default_config(localsend::PlatformKind::Psv);
   require(psv_config.inbox_path.string() == "ux0:data/localsend/inbox/", "psv inbox path mismatch");
+  require(psv_config.outbox_path.string() == "ux0:data/localsend/outbox/", "psv outbox path mismatch");
   require(psv_config.config_path.string() == "ux0:data/localsend/config.json", "psv config path mismatch");
   require(psv_config.certificate_path.string() == "ux0:data/localsend/cert.pem", "psv certificate path mismatch");
   require(psv_config.private_key_path.string() == "ux0:data/localsend/key.pem", "psv private key path mismatch");
@@ -543,6 +545,7 @@ void test_config_round_trip() {
   auto config = localsend::default_config(localsend::PlatformKind::Desktop);
   config.alias = "Desk";
   config.inbox_path = "downloads";
+  config.outbox_path = "uploads";
   config.certificate_path = "tls/cert.pem";
   config.private_key_path = "tls/key.pem";
   config.port = 12345;
@@ -553,6 +556,7 @@ void test_config_round_trip() {
   const auto loaded = localsend::load_config(localsend::PlatformKind::Desktop, path);
   require(loaded.alias == "Desk", "config alias round trip failed");
   require(loaded.inbox_path.string() == "downloads", "config inbox round trip failed");
+  require(loaded.outbox_path.string() == "uploads", "config outbox round trip failed");
   require(loaded.certificate_path.string() == "tls/cert.pem", "config certificate round trip failed");
   require(loaded.private_key_path.string() == "tls/key.pem", "config private key round trip failed");
   require(loaded.port == 12345, "config port round trip failed");
@@ -853,6 +857,24 @@ void test_file_browser_listing() {
   require(files.size() == 2, "file browser selectable file count failed");
   require(files[0].filename() == "beta.txt", "file browser selectable first failed");
   require(files[1].filename() == "中文.txt", "file browser selectable UTF-8 failed");
+
+  std::filesystem::remove_all(dir);
+}
+
+void test_prepare_outbox_creates_sample_file() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-outbox-tests";
+  std::filesystem::remove_all(dir);
+
+  const auto status = localsend::prepare_outbox(dir);
+  require(status.directory_ready, "outbox directory should be ready");
+  require(status.sample_ready, "outbox sample should be ready");
+  require(status.selectable_count == 1, "outbox selectable count failed");
+  require(status.sample_file.filename() == "localsend-handheld-test.txt", "outbox sample name failed");
+
+  const auto listing = localsend::list_directory(dir);
+  const auto files = localsend::selectable_files(listing);
+  require(files.size() == 1, "outbox listing selectable count failed");
+  require(files[0].filename() == "localsend-handheld-test.txt", "outbox listing sample failed");
 
   std::filesystem::remove_all(dir);
 }
@@ -1613,6 +1635,7 @@ int main() {
     test_safe_filename();
     test_unique_destination();
     test_file_browser_listing();
+    test_prepare_outbox_creates_sample_file();
     test_http_server_routes_and_upload();
     test_http_info_and_register_discovery_semantics();
     test_https_server_routes_and_upload();

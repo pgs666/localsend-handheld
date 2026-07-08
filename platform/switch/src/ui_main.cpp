@@ -11,6 +11,7 @@ int main(int argc, char* argv[]) {
   config.device_type = localsend::DeviceType::Desktop;
   config.renderer = "borealis Switch";
   config.inbox_path = "sdmc:/switch/localsend/inbox/";
+  config.outbox_path = "sdmc:/switch/localsend/outbox/";
   config.config_path = "sdmc:/switch/localsend/config.json";
   config.log_path = "sdmc:/switch/localsend/localsend-borealis.log";
   config.port = 53317;

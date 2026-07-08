@@ -14,6 +14,7 @@ enum class PlatformKind {
 struct AppConfig {
   std::string alias = "LocalSend Handheld";
   std::filesystem::path inbox_path;
+  std::filesystem::path outbox_path;
   std::filesystem::path config_path;
   std::filesystem::path certificate_path;
   std::filesystem::path private_key_path;

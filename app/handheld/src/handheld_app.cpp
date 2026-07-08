@@ -1,6 +1,7 @@
 #include "localsend/handheld_app.hpp"
 
 #include "localsend/app_service.hpp"
+#include "localsend/file_browser.hpp"
 #include "localsend/status_format.hpp"
 
 #include <borealis.hpp>
@@ -36,6 +37,7 @@ struct RuntimeState {
   std::string ip = "-";
   std::string server_status = "Not started";
   std::string discovery_status = "Not started";
+  std::string file_browser_status = "Not checked";
 };
 
 struct PanelRefs {
@@ -107,6 +109,7 @@ brls::View* make_panel(const HandheldAppConfig& config, const RuntimeState& stat
 
   root->addView(make_section("Paths"));
   root->addView(make_row("Inbox", config.inbox_path));
+  root->addView(make_row("Outbox", config.outbox_path));
   root->addView(make_row("Config", config.config_path));
   root->addView(make_row("Log", config.log_path));
 
@@ -116,7 +119,7 @@ brls::View* make_panel(const HandheldAppConfig& config, const RuntimeState& stat
                          scheme + "://" + state.ip + ":" + std::to_string(state.server_port) +
                              "/api/localsend/v2/info"));
   root->addView(make_row("Discovery", state.discovery_status, &refs.discovery_status));
-  root->addView(make_row("File browser", "Core exists; controller UI pending"));
+  root->addView(make_row("File browser", state.file_browser_status));
 
   root->addView(make_section("Peers"));
   root->addView(make_row("Known devices", "No peers yet", &refs.device_summary));
@@ -136,6 +139,23 @@ brls::View* make_panel(const HandheldAppConfig& config, const RuntimeState& stat
   scroll->setGrow(1.0f);
   scroll->setContentView(root);
   return scroll;
+}
+
+std::string format_outbox_status(const OutboxStatus& status) {
+  if (!status.error.empty()) {
+    return "Outbox error: " + status.error;
+  }
+  if (!status.directory_ready) {
+    return "Outbox unavailable";
+  }
+  std::string text = std::to_string(status.selectable_count) + " selectable file";
+  if (status.selectable_count != 1) {
+    text += "s";
+  }
+  if (status.sample_ready) {
+    text += "; test file ready";
+  }
+  return text;
 }
 
 void refresh_panel(const RuntimeState& state, const PanelRefs& refs) {
@@ -248,6 +268,9 @@ int run_handheld_app(const HandheldAppConfig& config) {
   state.server_port = config.port;
   state.ip = brls::Application::getPlatform()->getIpAddress();
   log_line("Detected IP: " + state.ip);
+  const OutboxStatus outbox_status = prepare_outbox(config.outbox_path, true);
+  state.file_browser_status = format_outbox_status(outbox_status);
+  log_line("Outbox status: " + state.file_browser_status);
 
   std::unique_ptr<AppService> service;
   const bool start_service_before_ui = config.platform != PlatformKind::Switch;

@@ -14,6 +14,7 @@ struct HandheldAppConfig {
   DeviceType device_type = DeviceType::Mobile;
   std::string renderer = "borealis";
   std::string inbox_path;
+  std::string outbox_path;
   std::string config_path;
   std::string log_path;
   int port = 53317;

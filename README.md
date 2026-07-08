@@ -141,5 +141,5 @@ manual IP probing:
 - No PIN, text messages, recursive folders, `/prepare-download`, or `/download`.
 - HTTP upload sends and receives files serially with fixed 64 KiB streaming buffers.
 - Switch now has a shared borealis UI shell build that starts the portable HTTPS receive service and discovery announcements. The older console bring-up source is still kept under `platform/switch/src/main.cpp` for reference while the UI path stabilizes, but it is not part of the default NRO build.
-- PSV uses the same shared borealis UI shell, exposes HTTP receive routes on `ux0:data/localsend/inbox/`, and periodically announces itself for discovery. The portable send core is compiled for PSV, but the PSV UI still needs a device picker and file browser before user-driven sending is available.
+- PSV uses the same shared borealis UI shell, exposes HTTP receive routes on `ux0:data/localsend/inbox/`, and periodically announces itself for discovery. The portable send core is compiled for PSV, and the shared UI prepares an `outbox/` with a small test file; a controller-driven device picker and send action are still pending.
 - borealis handheld UI is still a shared status screen; the full device list, transfer list, file picker, and settings pages are pending.

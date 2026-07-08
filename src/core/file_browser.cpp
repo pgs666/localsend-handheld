@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
 #include <system_error>
 
 namespace localsend {
@@ -79,6 +80,30 @@ std::vector<std::filesystem::path> selectable_files(const DirectoryListing& list
     }
   }
   return files;
+}
+
+OutboxStatus prepare_outbox(const std::filesystem::path& path, bool create_sample_file) {
+  OutboxStatus status;
+  status.path = path;
+  status.sample_file = path / "localsend-handheld-test.txt";
+
+  try {
+    std::filesystem::create_directories(path);
+    status.directory_ready = std::filesystem::is_directory(path);
+
+    if (create_sample_file && !std::filesystem::exists(status.sample_file)) {
+      std::ofstream out(status.sample_file, std::ios::binary);
+      out << "LocalSend Handheld test file\n";
+    }
+    status.sample_ready = std::filesystem::is_regular_file(status.sample_file);
+
+    const auto listing = list_directory(path);
+    status.selectable_count = selectable_files(listing).size();
+  } catch (const std::exception& e) {
+    status.error = e.what();
+  }
+
+  return status;
 }
 
 } // namespace localsend

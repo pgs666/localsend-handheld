@@ -32,6 +32,18 @@ std::filesystem::path default_inbox_path(PlatformKind platform) {
   return "inbox/";
 }
 
+std::filesystem::path default_outbox_path(PlatformKind platform) {
+  switch (platform) {
+  case PlatformKind::Switch:
+    return "sdmc:/switch/localsend/outbox/";
+  case PlatformKind::Psv:
+    return "ux0:data/localsend/outbox/";
+  case PlatformKind::Desktop:
+    return "outbox/";
+  }
+  return "outbox/";
+}
+
 std::filesystem::path default_config_path(PlatformKind platform) {
   switch (platform) {
   case PlatformKind::Switch:
@@ -93,6 +105,7 @@ Json to_json(const AppConfig& config) {
   Json json = Json::object();
   json["alias"] = config.alias;
   json["inboxPath"] = config.inbox_path.string();
+  json["outboxPath"] = config.outbox_path.string();
   json["certificatePath"] = config.certificate_path.string();
   json["privateKeyPath"] = config.private_key_path.string();
   json["port"] = static_cast<std::int64_t>(config.port);
@@ -107,6 +120,7 @@ AppConfig default_config(PlatformKind platform) {
   AppConfig config;
   config.alias = platform_alias(platform);
   config.inbox_path = default_inbox_path(platform);
+  config.outbox_path = default_outbox_path(platform);
   config.config_path = default_config_path(platform);
   config.certificate_path = default_certificate_path(platform);
   config.private_key_path = default_private_key_path(platform);
@@ -129,6 +143,7 @@ AppConfig load_config(PlatformKind platform, const std::filesystem::path& path) 
   const Json json = Json::parse(text);
   config.alias = optional_string(json, "alias", config.alias);
   config.inbox_path = optional_string(json, "inboxPath", config.inbox_path.string());
+  config.outbox_path = optional_string(json, "outboxPath", config.outbox_path.string());
   config.certificate_path = optional_string(json, "certificatePath", config.certificate_path.string());
   config.private_key_path = optional_string(json, "privateKeyPath", config.private_key_path.string());
   config.port = optional_int(json, "port", config.port);

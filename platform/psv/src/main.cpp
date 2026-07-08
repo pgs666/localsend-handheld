@@ -6,6 +6,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <memory>
 #include <string>
 
@@ -19,6 +20,16 @@ constexpr const char* kProtocol = "LocalSend protocol 2.1";
 constexpr const char* kInboxPath = "ux0:data/localsend/inbox/";
 constexpr const char* kConfigPath = "ux0:data/localsend/config.json";
 constexpr const char* kLogPath = "ux0:data/localsend-borealis.log";
+
+FILE* gLog = nullptr;
+
+void logLine(const std::string& line)
+{
+    if (!gLog)
+        return;
+    std::fprintf(gLog, "%s\n", line.c_str());
+    std::fflush(gLog);
+}
 
 struct RuntimeState {
     bool serverStarted = false;
@@ -119,12 +130,15 @@ std::unique_ptr<localsend::AppService> startService(RuntimeState& state)
     options.device_type = localsend::DeviceType::Mobile;
 
     auto service = std::make_unique<localsend::AppService>(config, options);
+    logLine("Starting HTTP server on port " + std::to_string(config.port));
     state.serverStarted = service->start_server();
     if (state.serverStarted) {
         state.serverPort = service->status().port;
         state.serverStatus = "Started";
+        logLine("HTTP server started on port " + std::to_string(state.serverPort));
     } else {
         state.serverStatus = "Failed to start";
+        logLine("HTTP server failed to start");
     }
     return service;
 }
@@ -136,12 +150,16 @@ int main(int argc, char* argv[])
     (void)argc;
     (void)argv;
 
+    gLog = std::fopen(kLogPath, "w+");
     brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
-    brls::Logger::setLogOutput(std::fopen(kLogPath, "w+"));
+    brls::Logger::setLogOutput(gLog);
     brls::Platform::APP_LOCALE_DEFAULT = brls::LOCALE_AUTO;
+    logLine("LocalSend Handheld PSV boot");
 
-    if (!brls::Application::init())
+    if (!brls::Application::init()) {
+        logLine("borealis init failed");
         return EXIT_FAILURE;
+    }
 
     brls::Application::createWindow("LocalSend Handheld");
     brls::Application::getPlatform()->setThemeVariant(brls::ThemeVariant::DARK);
@@ -149,7 +167,18 @@ int main(int argc, char* argv[])
 
     RuntimeState state;
     state.ip = brls::Application::getPlatform()->getIpAddress();
-    auto service = startService(state);
+    logLine("Detected IP: " + state.ip);
+
+    std::unique_ptr<localsend::AppService> service;
+    try {
+        service = startService(state);
+    } catch (const std::exception& e) {
+        state.serverStatus = std::string("Exception: ") + e.what();
+        logLine(state.serverStatus);
+    } catch (...) {
+        state.serverStatus = "Unknown exception";
+        logLine(state.serverStatus);
+    }
 
     auto* frame = new brls::AppletFrame(makePanel(state));
     frame->setTitle("LocalSend Handheld");

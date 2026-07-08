@@ -718,7 +718,12 @@ bool LocalSendServer::start(int requested_port) {
     return true;
   }
 
-  std::filesystem::create_directories(inbox_);
+  try {
+    std::filesystem::create_directories(inbox_);
+  } catch (const std::exception&) {
+    return false;
+  }
+
   listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
   if (listen_fd_ < 0) {
     return false;

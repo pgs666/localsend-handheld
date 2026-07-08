@@ -27,6 +27,7 @@ add_library(localsend_core
   src/core/config.cpp
   src/core/device_store.cpp
   src/core/discovery.cpp
+  src/core/file_browser.cpp
   src/core/http.cpp
   src/core/json.cpp
   src/core/protocol.cpp

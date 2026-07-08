@@ -3,6 +3,7 @@
 #include "localsend/config.hpp"
 #include "localsend/device_store.hpp"
 #include "localsend/discovery.hpp"
+#include "localsend/file_browser.hpp"
 #include "localsend/http.hpp"
 #include "localsend/protocol.hpp"
 #include "localsend/safe_path.hpp"
@@ -736,6 +737,38 @@ void test_unique_destination() {
   std::filesystem::remove_all(dir);
 }
 
+void test_file_browser_listing() {
+  const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-file-browser-tests";
+  std::filesystem::remove_all(dir);
+  std::filesystem::create_directories(dir / "Zoo");
+  std::filesystem::create_directories(dir / "alpha");
+  {
+    std::ofstream out(dir / "beta.txt", std::ios::binary);
+    out << "beta";
+  }
+  {
+    std::ofstream out(dir / "中文.txt", std::ios::binary);
+    out << "utf8";
+  }
+
+  const auto listing = localsend::list_directory(dir);
+  require(listing.path.filename() == dir.filename(), "file browser path failed");
+  require(listing.has_parent, "file browser parent failed");
+  require(listing.entries.size() == 4, "file browser entry count failed");
+  require(listing.entries[0].directory && listing.entries[0].name == "alpha", "file browser directory sort alpha failed");
+  require(listing.entries[1].directory && listing.entries[1].name == "Zoo", "file browser directory sort zoo failed");
+  require(!listing.entries[2].directory && listing.entries[2].name == "beta.txt", "file browser file sort failed");
+  require(listing.entries[2].size == 4, "file browser file size failed");
+  require(!listing.entries[3].directory && listing.entries[3].name == "中文.txt", "file browser UTF-8 name failed");
+
+  const auto files = localsend::selectable_files(listing);
+  require(files.size() == 2, "file browser selectable file count failed");
+  require(files[0].filename() == "beta.txt", "file browser selectable first failed");
+  require(files[1].filename() == "中文.txt", "file browser selectable UTF-8 failed");
+
+  std::filesystem::remove_all(dir);
+}
+
 void test_http_server_routes_and_upload() {
   const auto dir = std::filesystem::temp_directory_path() / "localsend-handheld-http-tests";
   std::filesystem::remove_all(dir);
@@ -1287,6 +1320,7 @@ int main() {
     test_app_service_async_send_to_manual_device();
     test_safe_filename();
     test_unique_destination();
+    test_file_browser_listing();
     test_http_server_routes_and_upload();
     test_https_server_routes_and_upload();
     test_http_send_multiple_files();

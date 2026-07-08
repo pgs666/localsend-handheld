@@ -139,6 +139,26 @@ std::string mbedtls_error_text(const char* operation, int result) {
   return std::string(operation) + " failed: " + std::to_string(result);
 }
 
+#if LOCALSEND_PLATFORM_PSV
+constexpr const char* kPsvDevCertificatePem = R"(-----BEGIN CERTIFICATE-----
+MIIBiDCCAS2gAwIBAgIUUcLWK1tA8WKdn+t/fxSiI5qWT5QwCgYIKoZIzj0EAwIw
+GTEXMBUGA1UEAwwOTG9jYWxTZW5kIFVzZXIwHhcNMjYwNzA4MTQzNDQ1WhcNMzYw
+NzA1MTQzNDQ1WjAZMRcwFQYDVQQDDA5Mb2NhbFNlbmQgVXNlcjBZMBMGByqGSM49
+AgEGCCqGSM49AwEHA0IABOavrPS2wH8pdnZDsdhdfaxxUttjJEKhyBAVnOkfdlah
+E90k6vydVqsNbBsRRVvZoWvSQZkyquBmC7pNO0p6n3mjUzBRMB0GA1UdDgQWBBRs
+roL19pdwM5ls3xlasXLubyKx6DAfBgNVHSMEGDAWgBRsroL19pdwM5ls3xlasXLu
+byKx6DAPBgNVHRMBAf8EBTADAQH/MAoGCCqGSM49BAMCA0kAMEYCIQCP29PnRdtp
+fF4WEo4RhH/Pg4vsVmobUYDsBYIcjhC+oQIhANpvLnUmafKi/PyRI3xOobVhdhKl
+Pk1qFc80dBaVwh8S
+-----END CERTIFICATE-----)";
+
+constexpr const char* kPsvDevPrivateKeyPem = R"(-----BEGIN EC PRIVATE KEY-----
+MHcCAQEEIKdVfcqC6iq8sq7X1DmaRSzlnlibvDbcJPDspuk8LyuaoAoGCCqGSM49
+AwEHoUQDQgAE5q+s9LbAfyl2dkOx2F19rHFS22MkQqHIEBWc6R92VqET3STq/J1W
+qw1sGxFFW9mha9JBmTKq4GYLuk07SnqfeQ==
+-----END EC PRIVATE KEY-----)";
+#endif
+
 TlsIdentity generate_tls_identity() {
   mbedtls_entropy_context entropy;
   mbedtls_ctr_drbg_context ctr_drbg;
@@ -371,10 +391,17 @@ TlsIdentity load_or_create_tls_identity(const std::filesystem::path& certificate
     return identity_from_pem(read_text_file(certificate_path), read_text_file(private_key_path));
   }
 
+#if LOCALSEND_PLATFORM_PSV
+  TlsIdentity identity = identity_from_pem(kPsvDevCertificatePem, kPsvDevPrivateKeyPem);
+  write_text_file(certificate_path, identity.certificate_pem);
+  write_text_file(private_key_path, identity.private_key_pem);
+  return identity;
+#else
   TlsIdentity identity = generate_tls_identity();
   write_text_file(certificate_path, identity.certificate_pem);
   write_text_file(private_key_path, identity.private_key_pem);
   return identity;
+#endif
 }
 
 } // namespace localsend

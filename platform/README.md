@@ -3,7 +3,7 @@
 Current targets:
 
 - `desktop`: POSIX sockets, std threads, filesystem paths, protocol tests.
-- `switch`: libnx console `.nro` with HTTP receive MVP, UDP announcements, and inbox at `sdmc:/switch/localsend/inbox/`.
+- `switch`: libnx console `.nro` with HTTP/HTTPS receive MVP, HTTPS send bring-up path, UDP announcements, and inbox at `sdmc:/switch/localsend/inbox/`.
 - `psv`: VitaSDK smoke `.vpk`; protocol receive/send still needs implementation.
 
 Planned handheld paths:
@@ -14,3 +14,7 @@ Planned handheld paths:
 - PSV inbox: `ux0:data/localsend/inbox/`
 
 The portable core protocol code stays free of borealis/libnx/VitaSDK includes.
+
+Switch HTTPS currently uses an embedded development certificate in the console
+MVP. The portable core already has persistent `cert.pem` / `key.pem` generation;
+the platform app still needs to load that identity instead of embedding PEM data.

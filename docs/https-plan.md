@@ -23,10 +23,18 @@ Implementation sequence:
 6. Wrap the existing HTTP server/client stream operations with mbedTLS. Done for desktop core.
 7. Advertise `protocol: "https"` and the certificate fingerprint. Done for desktop core.
 8. Verify peer fingerprints when discovery/register/info provided one. Done for desktop core.
-9. Link mbedTLS into Switch and PSV package builds.
-10. Add UI/config controls to enable HTTPS on handheld targets.
+9. Link mbedTLS into Switch and PSV package builds. Done for Switch NRO; PSV still needs protocol integration.
+10. Add UI/config controls to enable HTTPS on handheld targets. Switch currently advertises HTTPS in the console MVP.
+11. Replace the temporary embedded Switch certificate with the portable persistent identity loader.
 
 Expected platform paths:
 
 - Switch: `sdmc:/switch/localsend/cert.pem`, `sdmc:/switch/localsend/key.pem`.
 - PSV: `ux0:data/localsend/cert.pem`, `ux0:data/localsend/key.pem`.
+
+Current handheld status:
+
+- Desktop core supports HTTPS send and receive in tests.
+- Switch console MVP supports HTTPS target probing, HTTPS file send, HTTPS discovery, and same-port HTTP/HTTPS receive.
+- Switch HTTPS receive still uses an embedded development certificate; persistent platform certificate loading is the next cleanup step.
+- PSV remains a packaging smoke target.

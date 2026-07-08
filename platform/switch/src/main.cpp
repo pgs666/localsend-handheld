@@ -18,11 +18,13 @@ constexpr int kPort = 53317;
 constexpr int kBufferSize = 64 * 1024;
 constexpr int kMaxFiles = 16;
 constexpr const char* kInbox = "sdmc:/switch/localsend/inbox";
+constexpr const char* kLogPath = "sdmc:/switch/localsend/localsend.log";
 constexpr const char* kMulticastGroup = "224.0.0.167";
 constexpr const char* kBroadcastAddress = "255.255.255.255";
 
 struct PendingFile {
   bool active = false;
+  std::string map_key = "0";
   std::string file_id = "0";
   std::string token = "switch-token-0";
   std::string file_name = "localsend-upload.bin";
@@ -40,6 +42,16 @@ UploadSession g_session;
 int g_received_files = 0;
 char g_status[256] = "Starting";
 int g_announcements = 0;
+
+void append_log(const std::string& line) {
+  FILE* out = std::fopen(kLogPath, "ab");
+  if (!out) {
+    return;
+  }
+  std::fwrite(line.data(), 1, line.size(), out);
+  std::fwrite("\n", 1, 1, out);
+  std::fclose(out);
+}
 
 bool starts_with(const std::string& value, const char* prefix) {
   return value.rfind(prefix, 0) == 0;
@@ -387,6 +399,8 @@ void handle_info(int fd) {
 }
 
 void handle_prepare_upload(int fd, const std::string& body) {
+  append_log("prepare-upload body bytes=" + std::to_string(body.size()));
+  append_log(body.substr(0, 4096));
   g_session.active = true;
   g_session.session_id = "switch-session";
   g_session.file_count = 0;
@@ -403,6 +417,7 @@ void handle_prepare_upload(int fd, const std::string& body) {
     PendingFile& file = g_session.files[g_session.file_count];
     file.active = true;
     const std::string fallback_id = previous_object_key(body, object_start == std::string::npos ? pos : object_start, std::to_string(g_session.file_count));
+    file.map_key = fallback_id;
     file.file_id = find_json_string_from(body, object_start == std::string::npos ? pos : object_start, "id", fallback_id);
     if (object_end != std::string::npos && body.find("\"id\":", object_start) > object_end) {
       file.file_id = fallback_id;
@@ -417,6 +432,7 @@ void handle_prepare_upload(int fd, const std::string& body) {
   if (g_session.file_count == 0) {
     PendingFile& file = g_session.files[0];
     file.active = true;
+    file.map_key = "0";
     file.file_id = find_json_string(body, "id", "0");
     file.token = "switch-token-0";
     file.file_name = sanitize_filename(find_json_string(body, "fileName", "localsend-upload.bin"));
@@ -430,8 +446,19 @@ void handle_prepare_upload(int fd, const std::string& body) {
       response += ",";
     }
     response += "\"" + json_escape(g_session.files[i].file_id) + "\":\"" + g_session.files[i].token + "\"";
+    if (g_session.files[i].map_key != g_session.files[i].file_id) {
+      response += ",\"" + json_escape(g_session.files[i].map_key) + "\":\"" + g_session.files[i].token + "\"";
+    }
+    const std::string ordinal = std::to_string(i);
+    if (ordinal != g_session.files[i].file_id && ordinal != g_session.files[i].map_key) {
+      response += ",\"" + ordinal + "\":\"" + g_session.files[i].token + "\"";
+    }
+    append_log("prepared index=" + std::to_string(i) + " mapKey=" + g_session.files[i].map_key +
+               " fileId=" + g_session.files[i].file_id + " name=" + g_session.files[i].file_name +
+               " size=" + std::to_string(g_session.files[i].size) + " token=" + g_session.files[i].token);
   }
   response += "}}";
+  append_log("prepare response=" + response);
   std::snprintf(g_status, sizeof(g_status), "Prepared: %d file(s)", g_session.file_count);
   send_response(fd, 200, "application/json", response);
 }
@@ -440,14 +467,17 @@ void handle_upload(int fd, const std::string& target, const std::string& initial
   PendingFile* selected = nullptr;
   const std::string file_id = query_value(target, "fileId");
   const std::string token = query_value(target, "token");
+  append_log("upload query fileId=" + file_id + " token=" + token + " length=" + std::to_string(length));
   for (int i = 0; i < g_session.file_count; ++i) {
-    if (g_session.files[i].active && g_session.files[i].file_id == file_id && g_session.files[i].token == token) {
+    if (g_session.files[i].active && (g_session.files[i].file_id == file_id || g_session.files[i].map_key == file_id || std::to_string(i) == file_id) &&
+        g_session.files[i].token == token) {
       selected = &g_session.files[i];
       break;
     }
   }
 
   if (!g_session.active || query_value(target, "sessionId") != g_session.session_id || selected == nullptr) {
+    append_log("upload rejected active=" + std::to_string(g_session.active) + " sessionId=" + query_value(target, "sessionId"));
     send_response(fd, 403, "text/plain", "invalid session");
     return;
   }
@@ -457,6 +487,7 @@ void handle_upload(int fd, const std::string& target, const std::string& initial
   FILE* out = std::fopen(path.c_str(), "wb");
   if (!out) {
     std::snprintf(g_status, sizeof(g_status), "Open failed: errno %d", errno);
+    append_log("open failed path=" + path + " errno=" + std::to_string(errno));
     send_response(fd, 400, "text/plain", "open failed");
     return;
   }
@@ -484,6 +515,7 @@ void handle_upload(int fd, const std::string& target, const std::string& initial
 
   if (written != length) {
     std::snprintf(g_status, sizeof(g_status), "Incomplete upload: %zu/%zu", written, length);
+    append_log("upload incomplete path=" + path + " written=" + std::to_string(written) + " length=" + std::to_string(length));
     send_response(fd, 400, "text/plain", "incomplete upload");
     return;
   }
@@ -496,6 +528,7 @@ void handle_upload(int fd, const std::string& target, const std::string& initial
   }
   g_session.active = any_active;
   std::snprintf(g_status, sizeof(g_status), "Received: %s (%zu bytes)", selected->file_name.c_str(), written);
+  append_log("upload ok path=" + path + " bytes=" + std::to_string(written));
   send_response(fd, 200, "text/plain", "ok");
 }
 
@@ -625,6 +658,7 @@ int main(int argc, char* argv[]) {
   socketInitializeDefault();
   mkdir("sdmc:/switch/localsend", 0777);
   mkdir(kInbox, 0777);
+  append_log("app started");
 
   int server = create_server();
   if (server < 0) {
